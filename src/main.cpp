@@ -8,6 +8,7 @@
 #include <Geode/ui/Notification.hpp>
 #include <fmod.hpp>
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <filesystem>
 #include <fstream>
@@ -59,10 +60,19 @@ namespace {
     bool s_injecting = false;
 
     // drift statistics for the HUD
-    float s_driftMax = 0.f;
+    float s_driftMax[2] = {0.f, 0.f};
+    float s_driftNow[2] = {0.f, 0.f};
     int s_fixCount = 0;
     bool s_desync = false;
+    int s_desyncFrame = -1;
+    int s_desyncPlayer = 0;
     bool s_driftValid = false;
+    bool s_p2Active = false;
+
+    // checkpoint rewind statistics for the HUD
+    int s_rewinds = 0;
+    int s_lastRewindFrame = -1;
+    int s_lastDropped = 0;
 
     constexpr uint32_t kMagic1 = 0x3152414D; // v1: inputs only
     constexpr uint32_t kMagic3 = 0x3352414D; // v3: inputs + per-frame snapshots
@@ -155,18 +165,23 @@ namespace {
     }
 
     // pull a player back onto the recorded state; only touches it if it actually drifted
-    void fixPlayer(PlayerObject* p, PState const& s) {
+    void fixPlayer(int idx, PlayerObject* p, PState const& s) {
         if (!p || !s.on) return;
         float mag = std::max(std::abs(p->getPositionX() - s.x), std::abs(p->getPositionY() - s.y));
         s_driftValid = true;
-        s_driftMax = std::max(s_driftMax, mag);
+        s_driftNow[idx] = mag;
+        s_driftMax[idx] = std::max(s_driftMax[idx], mag);
+        if (idx == 1) s_p2Active = true;
 
         if (mag > 0.001f && mag < 20.f) {
             p->setPosition({s.x, s.y});
             p->m_yVelocity = s.yv;
             s_fixCount++;
-        } else if (mag >= 20.f) {
-            s_desync = true; // too far to be drift: the run really diverged, leave it alone
+        } else if (mag >= 20.f && !s_desync) {
+            // too far to be drift: the run really diverged, leave it alone
+            s_desync = true;
+            s_desyncFrame = s_frame;
+            s_desyncPlayer = idx + 1;
         }
 
         float rd = std::fmod(std::abs(p->getRotation() - s.rot), 360.f);
@@ -174,48 +189,58 @@ namespace {
         if (rd > 0.01f && mag < 20.f) p->setRotation(s.rot);
     }
 
-    // Replay mode: the panel's selected replay, falling back to this level's auto-saved one
+    // Replay mode: load the replay chosen in the Replay tab
     void loadForLevel(int levelID) {
         s_play.clear();
         s_playSnaps.clear();
-        bool anyLevel = opt("bot-any-level");
-        int lvl = 0;
 
         auto name = Mod::get()->getSavedValue<std::string>("selected-replay", "");
-        if (!name.empty() && readReplay(dirPath() / (name + ".mmr"), lvl, s_play, s_playSnaps)) {
-            if (lvl == levelID) return;
-            if (anyLevel) {
-                Notification::create(
-                    fmt::format("Replay is from level {}; playing it here anyway", lvl),
-                    NotificationIcon::Warning
-                )->show();
-                return;
-            }
-        }
-
-        s_play.clear();
-        s_playSnaps.clear();
-        auto latest = fmt::format("L{}_latest", levelID);
-        if (readReplay(dirPath() / (latest + ".mmr"), lvl, s_play, s_playSnaps) && lvl == levelID) {
+        if (name.empty()) {
+            Notification::create(
+                "No replay selected. Pick one in the Replay tab.", NotificationIcon::Error
+            )->show();
             return;
         }
 
-        s_play.clear();
-        s_playSnaps.clear();
-        Notification::create(
-            "No replay for this level. Record one, or pick one in the Replay tab.",
-            NotificationIcon::Error
-        )->show();
+        int lvl = 0;
+        if (!readReplay(dirPath() / (name + ".mmr"), lvl, s_play, s_playSnaps)) {
+            s_play.clear();
+            s_playSnaps.clear();
+            Notification::create("Could not read replay " + name, NotificationIcon::Error)->show();
+            return;
+        }
+
+        if (lvl != levelID) {
+            if (!opt("bot-any-level")) {
+                s_play.clear();
+                s_playSnaps.clear();
+                Notification::create(
+                    "This replay was recorded on another level. Turn on Replay On Any Level.",
+                    NotificationIcon::Error
+                )->show();
+                return;
+            }
+            Notification::create(
+                "Replay is from another level; playing it here anyway", NotificationIcon::Warning
+            )->show();
+        }
     }
 
     void resetBotTimeline() {
         s_frame = 0;
         s_cursor = 0;
         s_cp.clear();
-        s_driftMax = 0.f;
+        s_driftMax[0] = s_driftMax[1] = 0.f;
+        s_driftNow[0] = s_driftNow[1] = 0.f;
         s_fixCount = 0;
         s_desync = false;
+        s_desyncFrame = -1;
+        s_desyncPlayer = 0;
         s_driftValid = false;
+        s_p2Active = false;
+        s_rewinds = 0;
+        s_lastRewindFrame = -1;
+        s_lastDropped = 0;
     }
 }
 
@@ -241,20 +266,39 @@ namespace mm {
     std::string recordingInfo() {
         if (s_recBroken) return "Recording lost sync (unknown checkpoint)";
         if (s_rec.empty() || s_recLevel == 0) return "No recording in memory";
-        return fmt::format(
-            "Recording: level {}, {} inputs, {} frames", s_recLevel, s_rec.size(), s_snaps.size()
-        );
+        return fmt::format("Recording: {} inputs, {} frames", s_rec.size(), s_snaps.size());
     }
 
-    bool saveCurrentReplay(std::string& outName) {
-        if (!hasRecording()) return false;
+    // Saves the recording in memory under a name the user chose. `name` comes back cleaned.
+    bool saveReplayAs(std::string& name, std::string& err) {
+        if (!hasRecording()) {
+            err = "Nothing to save. Record a run first.";
+            return false;
+        }
+        std::string clean;
+        for (char c : name) {
+            if (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == '-') clean += c;
+            else if (c == ' ') clean += '_';
+        }
+        if (clean.size() > 32) clean.resize(32);
+        if (clean.empty()) {
+            err = "Type a name first.";
+            return false;
+        }
+
         std::error_code ec;
         std::filesystem::create_directories(dirPath(), ec);
-        for (int n = 1;; n++) {
-            outName = fmt::format("L{}_{}", s_recLevel, n);
-            if (!std::filesystem::exists(dirPath() / (outName + ".mmr"), ec)) break;
+        auto path = dirPath() / (clean + ".mmr");
+        if (std::filesystem::exists(path, ec)) {
+            err = fmt::format("A replay named \"{}\" already exists.", clean);
+            return false;
         }
-        return writeReplay(dirPath() / (outName + ".mmr"), s_recLevel, s_rec, s_snaps);
+        if (!writeReplay(path, s_recLevel, s_rec, s_snaps)) {
+            err = "Could not write the file.";
+            return false;
+        }
+        name = clean;
+        return true;
     }
 }
 
@@ -354,53 +398,84 @@ class $modify(MMPlayLayer, PlayLayer) {
         }
     }
 
+    // does the recorded state at `frame` match the player the game just restored?
+    bool snapMatches(int frame) {
+        if (frame < 0 || static_cast<size_t>(frame) >= s_snaps.size() || !m_player1) return false;
+        auto const& st = s_snaps[frame].p[0];
+        return std::abs(st.x - m_player1->getPositionX()) < 0.05f &&
+               std::abs(st.y - m_player1->getPositionY()) < 0.05f;
+    }
+
+    // latest recorded frame whose state equals the restored one (used if the stored frame is missing/wrong)
+    int findMatchingFrame() {
+        for (int i = static_cast<int>(s_snaps.size()) - 1; i >= 0; i--) {
+            if (snapMatches(i)) return i;
+        }
+        return -1;
+    }
+
     void loadFromCheckpoint(CheckpointObject* checkpoint) {
         PlayLayer::loadFromCheckpoint(checkpoint);
         s_cpLoaded = true;
         if (botMode() != "Record") return;
 
+        // 1. the frame remembered when the checkpoint was stored, if it agrees with the restored state
+        int n = -1;
+        char const* how = "checkpoint";
         auto it = s_cp.find(checkpoint);
-        if (it == s_cp.end()) {
-            s_recBroken = true; // checkpoint we never saw: timeline can't be trusted
+        if (it != s_cp.end() && snapMatches(it->second.frame)) n = it->second.frame;
+
+        // 2. otherwise find the recorded frame the restored state belongs to
+        if (n < 0) {
+            n = findMatchingFrame();
+            how = "position";
+        }
+        if (n < 0) {
+            s_recBroken = true; // nothing in the timeline matches: it can't be trusted
+            if (opt("bot-debug")) {
+                Notification::create("Macro lost sync: checkpoint not found", NotificationIcon::Error)->show();
+            }
             return;
         }
-        int n = it->second.frame;
 
-        // 1. drop the failed attempt: inputs and snapshots at or after the checkpoint frame
+        // drop the failed attempt: inputs and snapshots at or after the checkpoint frame
+        size_t before = s_rec.size();
         auto cut = std::lower_bound(
             s_rec.begin(), s_rec.end(), n,
             [](Input const& in, int frame) { return in.frame < frame; }
         );
         s_rec.erase(cut, s_rec.end());
         if (s_snaps.size() > static_cast<size_t>(n)) s_snaps.resize(n);
+        s_lastDropped = static_cast<int>(before - s_rec.size());
 
-        // 2. the game releases all buttons on respawn; make the timeline say the same
-        bool held[2][4] = {};
-        for (auto const& in : s_rec) {
-            if (in.button >= 1 && in.button <= 3) held[in.p1 ? 0 : 1][in.button] = in.down;
-        }
-        for (int p = 0; p < 2; p++) {
-            for (int b = 1; b <= 3; b++) {
-                if (held[p][b]) s_rec.push_back({n, b, false, p == 0});
+        // some setups keep nothing held across a respawn; make the timeline say the same
+        if (opt("bot-release-on-rewind")) {
+            bool held[2][4] = {};
+            for (auto const& in : s_rec) {
+                if (in.button >= 1 && in.button <= 3) held[in.p1 ? 0 : 1][in.button] = in.down;
+            }
+            for (int pl = 0; pl < 2; pl++) {
+                for (int b = 1; b <= 3; b++) {
+                    if (held[pl][b]) s_rec.push_back({n, b, false, pl == 0});
+                }
             }
         }
 
-        // 3. rewind the clock
+        // rewind the clock
         s_frame = n;
         s_cursor = 0;
+        s_rewinds++;
+        s_lastRewindFrame = n;
+        if (opt("bot-debug")) {
+            Notification::create(
+                fmt::format("Macro rewound to frame {} ({}), dropped {} inputs", n, how, s_lastDropped),
+                NotificationIcon::Info
+            )->show();
+        }
     }
 
     void levelComplete() {
-        if (botMode() == "Record" && mm::hasRecording()) {
-            auto path = dirPath() / fmt::format("L{}_latest.mmr", s_recLevel);
-            std::error_code ec;
-            std::filesystem::create_directories(dirPath(), ec);
-            if (writeReplay(path, s_recLevel, s_rec, s_snaps)) {
-                Notification::create(
-                    fmt::format("Replay saved: L{}_latest", s_recLevel), NotificationIcon::Success
-                )->show();
-            }
-        }
+        // nothing is saved automatically: use Save in the Replay tab to name the recording
         PlayLayer::levelComplete();
     }
 
@@ -430,13 +505,24 @@ class $modify(MMPlayLayer, PlayLayer) {
                     s_frame, s_rec.size(), s_snaps.size(), s_cp.size(),
                     s_recBroken ? " LOST SYNC" : ""
                 );
+                text += fmt::format(
+                    "rewinds={} last->frame {} dropped {}\n",
+                    s_rewinds, s_lastRewindFrame, s_lastDropped
+                );
             } else if (mode == "Replay") {
                 text += fmt::format("PLAY frame={} input {}/{}\n", s_frame, s_cursor, s_play.size());
                 if (s_driftValid) {
                     text += fmt::format(
-                        "max drift={:.2f} corrected={}{}\n",
-                        s_driftMax, s_fixCount, s_desync ? " DESYNC" : ""
+                        "p1 drift now={:.2f} max={:.2f}\n", s_driftNow[0], s_driftMax[0]
                     );
+                    if (s_p2Active) {
+                        text += fmt::format(
+                            "p2 drift now={:.2f} max={:.2f}\n", s_driftNow[1], s_driftMax[1]
+                        );
+                    }
+                    text += fmt::format("corrected={}", s_fixCount);
+                    if (s_desync) text += fmt::format(" DESYNC p{} @frame {}", s_desyncPlayer, s_desyncFrame);
+                    text += "\n";
                 }
             }
         }
@@ -599,13 +685,15 @@ class $modify(MMBaseLayer, GJBaseGameLayer) {
                     Snap sn;
                     sn.p[0] = capture(m_player1);
                     sn.p[1] = capture(m_player2);
+                    // a parked / hidden player 2 must not count (dual mode keeps both close together)
+                    if (sn.p[1].on && std::abs(sn.p[1].x - sn.p[0].x) > 600.f) sn.p[1].on = false;
                     s_snaps.push_back(sn);
                 }
             } else if (mode == "Replay") {
                 // 1. pull the players back onto the recorded path if they drifted
                 if (opt("bot-frame-fix") && frame < s_playSnaps.size()) {
-                    fixPlayer(m_player1, s_playSnaps[frame].p[0]);
-                    fixPlayer(m_player2, s_playSnaps[frame].p[1]);
+                    fixPlayer(0, m_player1, s_playSnaps[frame].p[0]);
+                    fixPlayer(1, m_player2, s_playSnaps[frame].p[1]);
                 }
                 // 2. feed this step's inputs
                 while (s_cursor < s_play.size() && s_play[s_cursor].frame <= s_frame) {

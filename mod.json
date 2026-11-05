@@ -101,6 +101,12 @@
 			"description": "Let a macro play on a different level (copy, layout version). Off = only the level it was recorded on.",
 			"default": true
 		},
+		"bot-release-on-rewind": {
+			"type": "bool",
+			"name": "Release Buttons On Rewind",
+			"description": "When practice mode respawns you at a checkpoint, record that every held button was released. Turn off if replays fail right after a respawn point.",
+			"default": true
+		},
 		"bot-mode": {
 			"type": "string",
 			"name": "Replay Bot",

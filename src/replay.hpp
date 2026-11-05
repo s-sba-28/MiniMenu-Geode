@@ -8,5 +8,6 @@ namespace mm {
     std::vector<std::string> listReplays();        // names without extension, sorted
     bool hasRecording();                           // usable recording in memory?
     std::string recordingInfo();                   // short status text for the panel
-    bool saveCurrentReplay(std::string& outName);  // writes it to replayDir(), returns its name
+    // save the recording under a user-chosen name; `name` is cleaned in place, `err` explains a failure
+    bool saveReplayAs(std::string& name, std::string& err);
 }

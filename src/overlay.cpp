@@ -4,7 +4,10 @@
 #ifdef GEODE_IS_WINDOWS
 #include <Geode/modify/CCKeyboardDispatcher.hpp>
 #endif
+#include <Geode/binding/EndLevelLayer.hpp>
+#include <Geode/binding/PauseLayer.hpp>
 #include <Geode/ui/Notification.hpp>
+#include <Geode/ui/TextInput.hpp>
 #include <algorithm>
 #include <cmath>
 #include "replay.hpp"
@@ -51,6 +54,11 @@ protected:
     CCPoint m_c;
     std::vector<CCMenu*> m_menus;
     Ref<CCMenuItem> m_pressed;
+
+    // "name your replay" dialog
+    CCNode* m_dlg = nullptr;
+    CCMenu* m_dlgMenu = nullptr;
+    TextInput* m_nameInput = nullptr;
 
     // tabs
     CCNode* m_main = nullptr;
@@ -250,7 +258,7 @@ protected:
         m_infoLabel->setPosition(c.x, c.y - 44.f);
         m_replay->addChild(m_infoLabel);
 
-        auto note = CCLabelBMFont::create("Finished runs auto-save as L<id>_latest", "chatFont.fnt");
+        auto note = CCLabelBMFont::create("Record a run, then Save and name it", "chatFont.fnt");
         note->setScale(0.5f);
         note->setPosition(c.x, c.y - 62.f);
         m_replay->addChild(note);
@@ -271,7 +279,8 @@ protected:
 
     // ================= touch =================
     void registerWithTouchDispatcher() override {
-        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
+        // ahead of FLAlertLayer (-500) so the panel works on top of the pause / complete screens
+        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -510, true);
     }
 
     // The panel swallows every touch at priority -500 and hands taps to its own
@@ -289,8 +298,12 @@ protected:
 
     CCMenuItem* itemAt(CCPoint const& p) {
         std::vector<CCMenu*> order;
-        if (m_dropMenu) order.push_back(m_dropMenu); // dropdown sits on top
-        for (auto it = m_menus.rbegin(); it != m_menus.rend(); ++it) order.push_back(*it);
+        if (m_dlgMenu) {
+            order.push_back(m_dlgMenu); // the dialog is modal: nothing else is clickable
+        } else {
+            if (m_dropMenu) order.push_back(m_dropMenu); // dropdown sits on top
+            for (auto it = m_menus.rbegin(); it != m_menus.rend(); ++it) order.push_back(*it);
+        }
         for (auto menu : order) {
             auto kids = menu->getChildren();
             if (!kids) continue;
@@ -308,6 +321,14 @@ protected:
         if (auto item = itemAt(p)) {
             m_pressed = item;
             item->selected();
+            return true;
+        }
+        if (m_dlg) {
+            // tapping the text box focuses it, tapping elsewhere in the dialog releases it
+            if (m_nameInput) {
+                if (m_nameInput->boundingBox().containsPoint(p)) m_nameInput->focus();
+                else m_nameInput->defocus();
+            }
             return true;
         }
         if (m_main && m_main->isVisible()) {
@@ -469,19 +490,83 @@ protected:
         m_modeSprite->setString(fmt::format("Bot: {}", next).c_str());
     }
 
+    // ---- naming dialog ----
     void onSave(CCObject*) {
-        std::string name;
-        if (!mm::saveCurrentReplay(name)) {
+        if (!mm::hasRecording()) {
             Notification::create(
                 "Nothing to save. Set Bot: Record and play a level first.",
                 NotificationIcon::Error
             )->show();
             return;
         }
+        openNameDialog();
+    }
+
+    void openNameDialog() {
+        if (m_dlg) return;
+        closeDrop();
+
+        auto c = m_c;
+        auto dlg = CCLayerColor::create({0, 0, 0, 170});
+        this->addChild(dlg, 50);
+        m_dlg = dlg;
+
+        auto bg = CCScale9Sprite::create("GJ_square01.png");
+        bg->setContentSize({240.f, 130.f});
+        bg->setPosition(c);
+        dlg->addChild(bg);
+
+        auto title = CCLabelBMFont::create("Name your replay", "goldFont.fnt");
+        title->setScale(0.6f);
+        title->setPosition(c.x, c.y + 42.f);
+        dlg->addChild(title);
+
+        m_nameInput = TextInput::create(190.f, "name", "bigFont.fnt");
+        m_nameInput->setMaxCharCount(32);
+        m_nameInput->setFilter("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_- ");
+        m_nameInput->setPosition(c.x, c.y + 8.f);
+        dlg->addChild(m_nameInput);
+
+        m_dlgMenu = CCMenu::create();
+        m_dlgMenu->setPosition({0.f, 0.f});
+        dlg->addChild(m_dlgMenu);
+
+        auto okSpr = ButtonSprite::create("Save");
+        okSpr->setScale(0.55f);
+        auto ok = CCMenuItemSpriteExtra::create(okSpr, this, menu_selector(MMPanel::onDlgOk));
+        ok->setPosition(c.x - 50.f, c.y - 38.f);
+        m_dlgMenu->addChild(ok);
+
+        auto cancelSpr = ButtonSprite::create("Cancel");
+        cancelSpr->setScale(0.55f);
+        auto cancel = CCMenuItemSpriteExtra::create(cancelSpr, this, menu_selector(MMPanel::onDlgCancel));
+        cancel->setPosition(c.x + 50.f, c.y - 38.f);
+        m_dlgMenu->addChild(cancel);
+    }
+
+    void closeNameDialog() {
+        if (m_nameInput) m_nameInput->defocus();
+        if (m_dlg) m_dlg->removeFromParent();
+        m_dlg = nullptr;
+        m_dlgMenu = nullptr;
+        m_nameInput = nullptr;
+    }
+
+    void onDlgOk(CCObject*) {
+        if (!m_nameInput) return;
+        std::string name = m_nameInput->getString();
+        std::string err;
+        if (!mm::saveReplayAs(name, err)) {
+            Notification::create(err, NotificationIcon::Error)->show();
+            return; // keep the dialog open so the name can be fixed
+        }
         Mod::get()->setSavedValue<std::string>("selected-replay", name);
         m_selSprite->setString(selectorText().c_str());
-        Notification::create("Saved " + name, NotificationIcon::Success)->show();
+        Notification::create("Saved \"" + name + "\"", NotificationIcon::Success)->show();
+        closeNameDialog();
     }
+
+    void onDlgCancel(CCObject*) { closeNameDialog(); }
 
     void onImport(CCObject*) {
         std::string msg = fmt::format(
@@ -545,22 +630,40 @@ protected:
         return true;
     }
 
-    // hide inside levels and the editor (and always on Windows: Tab opens the menu there)
+    // is the pause menu or the level-complete screen open?
+    static bool levelMenuOpen() {
+        auto scene = CCDirector::get()->getRunningScene();
+        if (scene) {
+            if (scene->getChildByType<PauseLayer>(0)) return true;
+            if (scene->getChildByType<EndLevelLayer>(0)) return true;
+        }
+        if (auto pl = PlayLayer::get()) {
+            if (pl->getChildByType<EndLevelLayer>(0)) return true;
+        }
+        return false;
+    }
+
+    // Android: show in menus, the pause menu and the level-complete screen, hide while playing.
+    // Windows: never show the button; Tab opens the menu everywhere instead.
     void tick(float) {
         bool inLevel = PlayLayer::get() || LevelEditorLayer::get();
-        bool show = !inLevel;
+        bool menuOpen = inLevel && levelMenuOpen();
+        bool show = !inLevel || menuOpen;
 #ifdef GEODE_IS_WINDOWS
         show = false;
 #endif
-        if (this->getChildByID("mm-panel")) show = false;
+        auto panel = this->getChildByID("mm-panel");
+        if (panel) show = false;
         m_btn->setVisible(show);
-        if (inLevel) {
-            if (auto p = this->getChildByID("mm-panel")) p->removeFromParent();
-        }
+#ifndef GEODE_IS_WINDOWS
+        // never leave the panel up over live gameplay on Android
+        if (panel && inLevel && !menuOpen) panel->removeFromParent();
+#endif
     }
 
     void registerWithTouchDispatcher() override {
-        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
+        // ahead of FLAlertLayer (-500): the pause and complete screens would otherwise swallow our taps
+        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -505, true);
     }
 
     bool ccTouchBegan(CCTouch* t, CCEvent*) override {
@@ -618,10 +721,9 @@ protected:
 public:
     inline static MMOverlay* s_instance = nullptr;
 
-    // Windows: Tab opens / closes the menu (menus only, not inside levels)
+    // Windows: Tab opens / closes the menu everywhere.
     static void togglePanel() {
         if (!s_instance) return;
-        if (PlayLayer::get() || LevelEditorLayer::get()) return;
         if (auto p = s_instance->getChildByID("mm-panel")) p->removeFromParent();
         else s_instance->openPanel();
     }
@@ -656,10 +758,8 @@ class $modify(MMDirector, CCDirector) {
 class $modify(MMKeys, CCKeyboardDispatcher) {
     bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool isKeyRepeat, double timestamp) {
         if (key == KEY_Tab && down && !isKeyRepeat) {
-            if (!PlayLayer::get() && !LevelEditorLayer::get()) {
-                MMOverlay::togglePanel();
-                return true; // consumed
-            }
+            MMOverlay::togglePanel();
+            return true; // consumed
         }
         return CCKeyboardDispatcher::dispatchKeyboardMSG(key, down, isKeyRepeat, timestamp);
     }
