@@ -1,12 +1,12 @@
 {
 	"geode": "6.0.0-alpha.1",
 	"gd": {
-		"android": "2.2091"
+		"android": "2.209"
 	},
-	"id": "sba.minimenu",
+	"id": "yourname.minimenu",
 	"name": "MiniMenu",
 	"version": "v0.1.0",
-	"developers": ["sba"],
+	"developers": ["yourname"],
 	"description": "Small utility mod: noclip, hitboxes, trajectory, replay bot.",
 	"settings": {
 		"noclip": {
@@ -25,6 +25,30 @@
 			"name": "Show Trajectory",
 			"description": "Draws predicted paths for holding and not holding.",
 			"default": false
+		},
+		"trajectory-debug": {
+			"type": "bool",
+			"name": "Trajectory Debug Text",
+			"description": "Shows steps simulated, distance moved, and whether the sim died.",
+			"default": true
+		},
+		"trajectory-time-scale": {
+			"type": "float",
+			"name": "Trajectory Time Scale",
+			"description": "Multiplier on the simulation step. If the path is a tiny dot, try 60.",
+			"default": 1.0,
+			"min": 0.01,
+			"max": 240.0,
+			"control": { "input": true, "slider": false }
+		},
+		"trajectory-steps": {
+			"type": "int",
+			"name": "Trajectory Steps",
+			"description": "How many steps to simulate.",
+			"default": 150,
+			"min": 10,
+			"max": 600,
+			"control": { "input": true, "slider": false }
 		},
 		"bot-mode": {
 			"type": "string",

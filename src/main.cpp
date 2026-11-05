@@ -25,8 +25,8 @@ namespace {
     bool s_injecting = false;
 
     std::string replayPath(int levelID) {
-    return fmt::format("{}/replay_{}.bin", Mod::get()->getSaveDir().string(), levelID);
-}
+        return fmt::format("{}/replay_{}.bin", Mod::get()->getSaveDir().string(), levelID);
+    }
 
     void saveReplay(int levelID) {
         std::ofstream out(replayPath(levelID), std::ios::binary);
@@ -62,16 +62,23 @@ class $modify(MMPlayLayer, PlayLayer) {
         CCDrawNode* hitNode = nullptr;
         CCDrawNode* trajNode = nullptr;
         Ref<PlayerObject> sim[2];
+        CCLabelBMFont* debugLabel = nullptr;
     };
 
-bool init(GJGameLevel* level, bool dontCreateObjects) {
-    if (!PlayLayer::init(level, dontCreateObjects)) return false;
+    bool init(GJGameLevel* level, bool dontCreateObjects) {
+        if (!PlayLayer::init(level, dontCreateObjects)) return false;
 
         auto f = m_fields.self();
         f->hitNode = CCDrawNode::create();
         f->trajNode = CCDrawNode::create();
         m_objectLayer->addChild(f->hitNode, 10000);
         m_objectLayer->addChild(f->trajNode, 10000);
+
+        f->debugLabel = CCLabelBMFont::create("", "chatFont.fnt");
+        f->debugLabel->setAnchorPoint({0.f, 1.f});
+        f->debugLabel->setScale(0.5f);
+        f->debugLabel->setPosition({70.f, CCDirector::get()->getWinSize().height - 10.f});
+        this->addChild(f->debugLabel, 1000);
 
         for (auto& s : f->sim) {
             s = PlayerObject::create(1, 1, this, m_objectLayer, false);
@@ -160,13 +167,20 @@ bool init(GJGameLevel* level, bool dontCreateObjects) {
     // Least reliable part: collision handling on the fake player can touch real
     // object state (orbs/portals). Test on a plain level first.
     void drawTrajectory() {
-        auto node = m_fields->trajNode;
+        auto f = m_fields.self();
+        auto node = f->trajNode;
         node->clear();
+        f->debugLabel->setString("");
         if (!opt("trajectory") || !m_player1 || m_player1->m_isDead) return;
+
+        float scale = static_cast<float>(Mod::get()->getSettingValue<double>("trajectory-time-scale"));
+        int maxSteps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("trajectory-steps"));
+        bool debug = opt("trajectory-debug");
+        std::string report;
 
         for (int i = 0; i < 2; i++) {
             bool hold = (i == 1);
-            auto fake = m_fields->sim[i].data();
+            auto fake = f->sim[i].data();
             if (!fake) continue;
 
             fake->copyAttributes(m_player1);
@@ -177,18 +191,29 @@ bool init(GJGameLevel* level, bool dontCreateObjects) {
             s_simDied = false;
 
             ccColor4F col = hold ? ccColor4F{0.f, 1.f, 0.f, 1.f} : ccColor4F{1.f, 0.4f, 0.f, 1.f};
-            constexpr float step = 1.f / 240.f;
-            CCPoint last = fake->getPosition();
+            float dt = (1.f / 240.f) * scale;
+            CCPoint start = fake->getPosition();
+            CCPoint last = start;
 
-            for (int s = 0; s < 150 && !s_simDied; s++) {
-                fake->update(step);
-                this->checkCollisions(fake, step, false);
+            int s = 0;
+            for (; s < maxSteps && !s_simDied; s++) {
+                fake->update(dt);
+                this->checkCollisions(fake, dt, false);
                 auto now = fake->getPosition();
-                node->drawSegment(last, now, 0.6f, col);
+                node->drawSegment(last, now, 1.2f, col);
                 last = now;
             }
             s_simulating = false;
+
+            if (s_simDied) node->drawDot(last, 3.f, ccColor4F{1.f, 0.f, 0.f, 1.f});
+
+            report += fmt::format(
+                "{}: steps={} dx={:.1f} died={}\n",
+                hold ? "hold" : "idle", s, last.x - start.x, s_simDied
+            );
         }
+
+        if (debug) f->debugLabel->setString(report.c_str());
     }
 };
 
@@ -196,7 +221,7 @@ bool init(GJGameLevel* level, bool dontCreateObjects) {
 // GJBaseGameLayer: replay bot record / playback
 // ============================================================
 class $modify(MMBaseLayer, GJBaseGameLayer) {
-void processCommands(float dt, bool isHalfTick, bool isLastTick) {
+    void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         if (PlayLayer::get() && botMode() == "Replay") {
             while (s_cursor < s_inputs.size() && s_inputs[s_cursor].frame <= s_frame) {
                 auto& in = s_inputs[s_cursor++];
@@ -205,7 +230,7 @@ void processCommands(float dt, bool isHalfTick, bool isLastTick) {
                 s_injecting = false;
             }
         }
-GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+        GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
         if (PlayLayer::get()) s_frame++;
     }
 

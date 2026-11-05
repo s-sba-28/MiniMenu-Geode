@@ -1,6 +1,6 @@
 // MiniMenu overlay - UNTESTED. Touch/popup/SceneManager APIs may differ in Geode v6 / GD 2.2091.
 #include <Geode/Geode.hpp>
-#include <Geode/modify/MenuLayer.hpp>
+#include <Geode/modify/CCDirector.hpp>
 
 using namespace geode::prelude;
 
@@ -25,7 +25,7 @@ protected:
         this->setTouchEnabled(true);
 
         auto win = CCDirector::get()->getWinSize();
-        auto c = win / 2;
+        auto c = ccp(win.width / 2.f, win.height / 2.f);
 
         auto bg = CCScale9Sprite::create("GJ_square01.png");
         bg->setContentSize({260.f, 210.f});
@@ -169,18 +169,19 @@ public:
     }
 };
 
-// create the overlay once, after the game is up
-class $modify(MMMenuLayer, MenuLayer) {
-    bool init() {
-        if (!MenuLayer::init()) return false;
+// keep one overlay alive and move it into each new scene
+class $modify(MMDirector, CCDirector) {
+    void willSwitchToScene(CCScene* scene) {
+        CCDirector::willSwitchToScene(scene);
 
-        static bool created = false;
-        if (!created) {
-            created = true;
-            if (auto o = MMOverlay::create()) {
-                SceneManager::get()->keepAcrossScenes(o);
-            }
+        static MMOverlay* overlay = nullptr;
+        if (!overlay) {
+            overlay = MMOverlay::create();
+            if (overlay) overlay->retain();
         }
-        return true;
+        if (!overlay || !scene) return;
+
+        overlay->removeFromParentAndCleanup(false);
+        scene->addChild(overlay, 100000);
     }
 };
