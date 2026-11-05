@@ -11,7 +11,6 @@ jobs:
           bindings-ref: main
           sdk: nightly
           target: Android64
-          combine: true
       - uses: actions/upload-artifact@v4
         with:
           name: mod
