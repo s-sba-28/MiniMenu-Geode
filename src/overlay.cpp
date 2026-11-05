@@ -22,8 +22,6 @@ protected:
 
     bool init() override {
         if (!CCLayerColor::initWithColor({0, 0, 0, 150})) return false;
-        this->setTouchEnabled(true);
-
         auto win = CCDirector::get()->getWinSize();
         auto c = ccp(win.width / 2.f, win.height / 2.f);
 
@@ -81,16 +79,8 @@ protected:
         closeBtn->setPosition(c.x, c.y - 88.f);
         menu->addChild(closeBtn);
 
-        // menu must sit above the panel's touch-swallowing priority
-        menu->setHandlerPriority(-501);
         return true;
     }
-
-    void registerWithTouchDispatcher() override {
-        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
-    }
-
-    bool ccTouchBegan(CCTouch*, CCEvent*) override { return true; }
 
     void onToggle(CCObject* sender) {
         auto t = static_cast<CCMenuItemToggler*>(sender);
@@ -136,7 +126,7 @@ protected:
         m_btn = CCMenuItemSpriteExtra::create(
             spr, this, menu_selector(MMOverlay::onOpen)
         );
-        m_btn->setPosition({28.f, win.height * 0.5f}); // fixed: left edge, middle
+        m_btn->setPosition({28.f, win.height * 0.5f + 35.f});
         menu->addChild(m_btn);
 
         this->schedule(schedule_selector(MMOverlay::tick));
