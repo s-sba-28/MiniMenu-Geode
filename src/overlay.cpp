@@ -47,6 +47,7 @@ class MMPanel : public CCLayerColor {
 protected:
     CCPoint m_c;
     std::vector<CCMenu*> m_menus;
+    Ref<CCMenuItem> m_pressed;
 
     // tabs
     CCNode* m_main = nullptr;
@@ -82,7 +83,7 @@ protected:
         auto menu = CCMenu::create();
         menu->setPosition({0.f, 0.f});
         parent->addChild(menu);
-        m_menus.push_back(menu); // priority is applied in onEnter, once the dispatcher knows the menu
+        m_menus.push_back(menu); // taps are routed to these menus' items by the panel itself
         return menu;
     }
 
@@ -266,19 +267,47 @@ protected:
     void onTabReplay(CCObject*) { showTab(1); }
 
     // ================= touch =================
-    void onEnter() override {
-        CCLayerColor::onEnter(); // registers this layer and every child menu with the dispatcher
-        // only now can priorities change: setHandlerPriority on an unregistered menu crashes
-        for (auto menu : m_menus) menu->setHandlerPriority(-501);
-    }
-
     void registerWithTouchDispatcher() override {
         CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
     }
 
+    // The panel swallows every touch at priority -500 and hands taps to its own
+    // buttons by hand. This avoids touching the dispatcher's per-menu priorities,
+    // which crashed on this Geode build.
+    bool itemHit(CCMenuItem* item, CCPoint const& p) {
+        if (!item->isEnabled()) return false;
+        for (CCNode* n = item; n; n = n->getParent()) {
+            if (!n->isVisible()) return false;
+        }
+        auto local = item->convertToNodeSpace(p);
+        auto size = item->getContentSize();
+        return local.x >= 0.f && local.y >= 0.f && local.x <= size.width && local.y <= size.height;
+    }
+
+    CCMenuItem* itemAt(CCPoint const& p) {
+        std::vector<CCMenu*> order;
+        if (m_dropMenu) order.push_back(m_dropMenu); // dropdown sits on top
+        for (auto it = m_menus.rbegin(); it != m_menus.rend(); ++it) order.push_back(*it);
+        for (auto menu : order) {
+            auto kids = menu->getChildren();
+            if (!kids) continue;
+            for (auto child : CCArrayExt<CCNode*>(kids)) {
+                if (auto item = typeinfo_cast<CCMenuItem*>(child)) {
+                    if (itemHit(item, p)) return item;
+                }
+            }
+        }
+        return nullptr;
+    }
+
     bool ccTouchBegan(CCTouch* t, CCEvent*) override {
+        auto p = t->getLocation();
+        if (auto item = itemAt(p)) {
+            m_pressed = item;
+            item->selected();
+            return true;
+        }
         if (m_main && m_main->isVisible()) {
-            auto p = t->getLocation();
             if (p.x >= m_sliderX0 - 12.f && p.x <= m_sliderX0 + kSliderW + 12.f &&
                 std::abs(p.y - m_sliderY) <= 18.f) {
                 m_dragging = true;
@@ -291,8 +320,24 @@ protected:
     void ccTouchMoved(CCTouch* t, CCEvent*) override {
         if (m_dragging) applySliderTouch(t->getLocation().x);
     }
-    void ccTouchEnded(CCTouch*, CCEvent*) override { m_dragging = false; }
-    void ccTouchCancelled(CCTouch*, CCEvent*) override { m_dragging = false; }
+
+    void ccTouchEnded(CCTouch* t, CCEvent*) override {
+        m_dragging = false;
+        if (m_pressed) {
+            Ref<CCMenuItem> item = m_pressed;
+            m_pressed = nullptr;
+            item->unselected();
+            if (itemHit(item, t->getLocation())) item->activate(); // may remove this panel
+        }
+    }
+
+    void ccTouchCancelled(CCTouch*, CCEvent*) override {
+        m_dragging = false;
+        if (m_pressed) {
+            m_pressed->unselected();
+            m_pressed = nullptr;
+        }
+    }
 
     // ================= dropdown =================
     void setReplayEnabled(bool on) {
@@ -339,8 +384,7 @@ protected:
 
         m_dropMenu = CCMenu::create();
         m_dropMenu->setPosition({0.f, 0.f});
-        m_replay->addChild(m_dropMenu, 11);   // panel is already running, so this registers it
-        m_dropMenu->setHandlerPriority(-502); // must come after addChild
+        m_replay->addChild(m_dropMenu, 11);
 
         float first = top - 5.f - rowH / 2.f;
         if (count == 0) {
