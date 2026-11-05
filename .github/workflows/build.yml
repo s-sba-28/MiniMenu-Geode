@@ -1,0 +1,18 @@
+name: Build
+on: workflow_dispatch
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: geode-sdk/build-geode-mod@main
+        with:
+          bindings: geode-sdk/bindings
+          bindings-ref: main
+          sdk: nightly
+          target: Android64
+          combine: true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mod
+          path: ./build/*.geode
