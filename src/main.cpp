@@ -272,6 +272,16 @@ class $modify(MMPlayLayer, PlayLayer) {
 class $modify(MMBaseLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         if (PlayLayer::get() && botMode() == "Replay") {
+            if (s_segments.empty()) {
+                GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
+                return;
+            }
+            while (s_segment + 1 < s_segments.size() &&
+                   s_cursor >= s_segments[s_segment].size()) {
+                s_segment++;
+                s_cursor = 0;
+                s_frame = 0;
+            }
             auto& segment = s_segments[s_segment];
             while (s_cursor < segment.size() && segment[s_cursor].frame <= s_frame) {
                 auto& in = segment[s_cursor++];
