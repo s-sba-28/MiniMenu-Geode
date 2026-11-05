@@ -19,7 +19,8 @@ namespace {
 
     // ---------- replay bot state ----------
     struct Input { int frame; int button; bool down; bool p1; };
-    std::vector<Input> s_inputs;
+    std::vector<std::vector<Input>> s_segments(1);
+    size_t s_segment = 0;
     size_t s_cursor = 0;
     int s_frame = 0;
     bool s_injecting = false;
@@ -30,27 +31,43 @@ namespace {
 
     void saveReplay(int levelID) {
         std::ofstream out(replayPath(levelID), std::ios::binary);
-        for (auto& i : s_inputs) {
-            int32_t f = i.frame, b = i.button;
-            uint8_t d = i.down, p = i.p1;
-            out.write(reinterpret_cast<char*>(&f), 4);
-            out.write(reinterpret_cast<char*>(&b), 4);
-            out.write(reinterpret_cast<char*>(&d), 1);
-            out.write(reinterpret_cast<char*>(&p), 1);
+        uint32_t segmentCount = static_cast<uint32_t>(s_segments.size());
+        out.write(reinterpret_cast<char*>(&segmentCount), 4);
+        for (auto const& segment : s_segments) {
+            uint32_t inputCount = static_cast<uint32_t>(segment.size());
+            out.write(reinterpret_cast<char*>(&inputCount), 4);
+            for (auto const& i : segment) {
+                int32_t f = i.frame, b = i.button;
+                uint8_t d = i.down, p = i.p1;
+                out.write(reinterpret_cast<char*>(&f), 4);
+                out.write(reinterpret_cast<char*>(&b), 4);
+                out.write(reinterpret_cast<char*>(&d), 1);
+                out.write(reinterpret_cast<char*>(&p), 1);
+            }
         }
     }
 
     void loadReplay(int levelID) {
-        s_inputs.clear();
+        s_segments.clear();
+        s_segments.emplace_back();
         std::ifstream in(replayPath(levelID), std::ios::binary);
-        while (in) {
-            int32_t f, b; uint8_t d, p;
-            if (!in.read(reinterpret_cast<char*>(&f), 4)) break;
-            in.read(reinterpret_cast<char*>(&b), 4);
-            in.read(reinterpret_cast<char*>(&d), 1);
-            in.read(reinterpret_cast<char*>(&p), 1);
-            s_inputs.push_back({f, b, d != 0, p != 0});
+        uint32_t segmentCount = 0;
+        if (!in.read(reinterpret_cast<char*>(&segmentCount), 4) || segmentCount == 0) return;
+        s_segments.clear();
+        for (uint32_t segment = 0; segment < segmentCount; segment++) {
+            uint32_t inputCount = 0;
+            if (!in.read(reinterpret_cast<char*>(&inputCount), 4)) break;
+            s_segments.emplace_back();
+            for (uint32_t input = 0; input < inputCount; input++) {
+                int32_t f, b; uint8_t d, p;
+                if (!in.read(reinterpret_cast<char*>(&f), 4)) break;
+                if (!in.read(reinterpret_cast<char*>(&b), 4)) break;
+                if (!in.read(reinterpret_cast<char*>(&d), 1)) break;
+                if (!in.read(reinterpret_cast<char*>(&p), 1)) break;
+                s_segments.back().push_back({f, b, d != 0, p != 0});
+            }
         }
+        s_segment = 0;
     }
 }
 
@@ -91,7 +108,11 @@ class $modify(MMPlayLayer, PlayLayer) {
         }
         s_frame = 0;
         s_cursor = 0;
-        if (mode == "Record") s_inputs.clear();
+        if (mode == "Record") {
+            s_segments.clear();
+            s_segments.emplace_back();
+            s_segment = 0;
+        }
         return true;
     }
 
@@ -99,7 +120,12 @@ class $modify(MMPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         s_frame = 0;
         s_cursor = 0;
-        if (botMode() == "Record") s_inputs.clear();
+        s_segment = 0;
+        if (botMode() == "Record") {
+            s_segments.clear();
+            s_segments.emplace_back();
+            s_segment = 0;
+        }
     }
 
     void levelComplete() {
@@ -109,6 +135,28 @@ class $modify(MMPlayLayer, PlayLayer) {
 
     void onQuit() {
         PlayLayer::onQuit();
+    }
+
+    void storeCheckpoint(CheckpointObject* checkpoint) {
+        PlayLayer::storeCheckpoint(checkpoint);
+        if (botMode() == "Record") {
+            s_segment++;
+            s_segments.emplace_back();
+            s_frame = 0;
+        } else if (botMode() == "Replay" && s_segment + 1 < s_segments.size()) {
+            s_segment++;
+            s_cursor = 0;
+            s_frame = 0;
+        }
+    }
+
+    void loadFromCheckpoint(CheckpointObject* checkpoint) {
+        PlayLayer::loadFromCheckpoint(checkpoint);
+        s_cursor = 0;
+        s_frame = 0;
+        if (botMode() == "Record" && s_segment < s_segments.size()) {
+            s_segments[s_segment].clear();
+        }
     }
 
     void destroyPlayer(PlayerObject* player, GameObject* obj) {
@@ -224,8 +272,9 @@ class $modify(MMPlayLayer, PlayLayer) {
 class $modify(MMBaseLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         if (PlayLayer::get() && botMode() == "Replay") {
-            while (s_cursor < s_inputs.size() && s_inputs[s_cursor].frame <= s_frame) {
-                auto& in = s_inputs[s_cursor++];
+            auto& segment = s_segments[s_segment];
+            while (s_cursor < segment.size() && segment[s_cursor].frame <= s_frame) {
+                auto& in = segment[s_cursor++];
                 s_injecting = true;
                 this->handleButton(in.down, in.button, in.p1);
                 s_injecting = false;
@@ -239,7 +288,9 @@ class $modify(MMBaseLayer, GJBaseGameLayer) {
         if (PlayLayer::get() && !s_injecting) {
             auto mode = botMode();
             if (mode == "Replay") return; // ignore manual input during playback
-            if (mode == "Record") s_inputs.push_back({s_frame, button, down, isPlayer1});
+            if (mode == "Record" && s_segment < s_segments.size()) {
+                s_segments[s_segment].push_back({s_frame, button, down, isPlayer1});
+            }
         }
         GJBaseGameLayer::handleButton(down, button, isPlayer1);
     }
