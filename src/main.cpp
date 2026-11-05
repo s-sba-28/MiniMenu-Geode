@@ -247,7 +247,7 @@ class $modify(MMPlayLayer, PlayLayer) {
             int s = 0;
             for (; s < maxSteps && !s_simDied; s++) {
                 fake->update(dt);
-                this->checkCollisions(fake, dt, false);
+                this->checkCollisions(fake, dt, true);
                 auto now = fake->getPosition();
                 node->drawSegment(last, now, 1.2f, col);
                 last = now;
