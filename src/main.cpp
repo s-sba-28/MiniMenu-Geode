@@ -99,7 +99,6 @@ class $modify(MMPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         s_frame = 0;
         s_cursor = 0;
-        if (botMode() == "Record") s_inputs.clear();
     }
 
     void levelComplete() {

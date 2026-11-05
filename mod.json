@@ -36,7 +36,7 @@
 			"type": "float",
 			"name": "Trajectory Time Scale",
 			"description": "Multiplier on the simulation step. If the path is a tiny dot, try 60.",
-			"default": 1.0,
+			"default": 60.0,
 			"min": 0.01,
 			"max": 240.0,
 			"control": { "input": true, "slider": false }
@@ -45,7 +45,7 @@
 			"type": "int",
 			"name": "Trajectory Steps",
 			"description": "How many steps to simulate.",
-			"default": 150,
+			"default": 300,
 			"min": 10,
 			"max": 600,
 			"control": { "input": true, "slider": false }
