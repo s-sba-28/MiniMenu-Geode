@@ -99,6 +99,7 @@ class $modify(MMPlayLayer, PlayLayer) {
         PlayLayer::resetLevel();
         s_frame = 0;
         s_cursor = 0;
+        if (botMode() == "Record") s_inputs.clear();
     }
 
     void levelComplete() {
@@ -107,7 +108,6 @@ class $modify(MMPlayLayer, PlayLayer) {
     }
 
     void onQuit() {
-        if (botMode() == "Record") saveReplay(m_level->m_levelID);
         PlayLayer::onQuit();
     }
 
@@ -174,6 +174,8 @@ class $modify(MMPlayLayer, PlayLayer) {
 
         float scale = static_cast<float>(Mod::get()->getSettingValue<double>("trajectory-time-scale"));
         int maxSteps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("trajectory-steps"));
+        if (scale == 1.f) scale = 60.f;
+        if (maxSteps == 150) maxSteps = 600;
         bool debug = opt("trajectory-debug");
         std::string report;
 
