@@ -6,7 +6,9 @@
 	"id": "yourname.minimenu",
 	"name": "MiniMenu",
 	"version": "v0.1.0",
-	"developers": ["yourname"],
+	"developers": [
+		"yourname"
+	],
 	"description": "Small utility mod: noclip, hitboxes, trajectory, replay bot.",
 	"settings": {
 		"noclip": {
@@ -39,7 +41,10 @@
 			"default": 60.0,
 			"min": 0.01,
 			"max": 240.0,
-			"control": { "input": true, "slider": false }
+			"control": {
+				"input": true,
+				"slider": false
+			}
 		},
 		"trajectory-steps": {
 			"type": "int",
@@ -48,13 +53,44 @@
 			"default": 300,
 			"min": 10,
 			"max": 600,
-			"control": { "input": true, "slider": false }
+			"control": {
+				"input": true,
+				"slider": false
+			}
+		},
+		"trajectory-solid-death": {
+			"type": "bool",
+			"name": "Trajectory: Predict Wall Crashes",
+			"description": "Also ends the path where you would crash into the side of a block.",
+			"default": true
+		},
+		"bot-debug": {
+			"type": "bool",
+			"name": "Bot Debug Text",
+			"description": "Shows frame / input counters while recording or replaying.",
+			"default": true
+		},
+		"speedhack": {
+			"type": "float",
+			"name": "Speedhack",
+			"description": "Game speed multiplier. Anything other than 1.0 puts levels in test mode.",
+			"default": 1.0,
+			"min": 0.1,
+			"max": 3.0,
+			"control": {
+				"input": true,
+				"slider": true
+			}
 		},
 		"bot-mode": {
 			"type": "string",
 			"name": "Replay Bot",
 			"description": "Record inputs, or replay them. Replay mode puts the level in test mode.",
-			"one-of": ["Off", "Record", "Replay"],
+			"one-of": [
+				"Off",
+				"Record",
+				"Replay"
+			],
 			"default": "Off"
 		}
 	}
