@@ -46,6 +46,7 @@ namespace {
 class MMPanel : public CCLayerColor {
 protected:
     CCPoint m_c;
+    std::vector<CCMenu*> m_menus;
 
     // tabs
     CCNode* m_main = nullptr;
@@ -80,8 +81,8 @@ protected:
     CCMenu* makeMenu(CCNode* parent) {
         auto menu = CCMenu::create();
         menu->setPosition({0.f, 0.f});
-        menu->setHandlerPriority(-501); // above the panel's touch-swallowing layer
         parent->addChild(menu);
+        m_menus.push_back(menu); // priority is applied in onEnter, once the dispatcher knows the menu
         return menu;
     }
 
@@ -265,6 +266,12 @@ protected:
     void onTabReplay(CCObject*) { showTab(1); }
 
     // ================= touch =================
+    void onEnter() override {
+        CCLayerColor::onEnter(); // registers this layer and every child menu with the dispatcher
+        // only now can priorities change: setHandlerPriority on an unregistered menu crashes
+        for (auto menu : m_menus) menu->setHandlerPriority(-501);
+    }
+
     void registerWithTouchDispatcher() override {
         CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
     }
@@ -332,8 +339,8 @@ protected:
 
         m_dropMenu = CCMenu::create();
         m_dropMenu->setPosition({0.f, 0.f});
-        m_dropMenu->setHandlerPriority(-502);
-        m_replay->addChild(m_dropMenu, 11);
+        m_replay->addChild(m_dropMenu, 11);   // panel is already running, so this registers it
+        m_dropMenu->setHandlerPriority(-502); // must come after addChild
 
         float first = top - 5.f - rowH / 2.f;
         if (count == 0) {
