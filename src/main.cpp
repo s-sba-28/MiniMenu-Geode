@@ -4,7 +4,9 @@
 #include <Geode/modify/PlayLayer.hpp>
 #include <Geode/modify/GJBaseGameLayer.hpp>
 #include <Geode/modify/CCScheduler.hpp>
+#include <Geode/binding/FMODAudioEngine.hpp>
 #include <Geode/ui/Notification.hpp>
+#include <fmod.hpp>
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -26,90 +28,180 @@ namespace {
     bool s_simDied = false;
 
     // ---------- replay bot state ----------
-    // One timeline of ABSOLUTE frames counted from the level start.
-    // Practice checkpoints remember the frame they were made on. Loading a checkpoint
-    // rewinds the frame counter to that value and drops everything recorded after it,
-    // so the failed attempt vanishes and the timeline stays one clean run.
+    // Inputs (what the game logic needs) + one state snapshot per physics step
+    // (used to pull a drifting replay back onto the recorded path).
+    // Both are indexed by ABSOLUTE frame counted from the level start. Practice
+    // checkpoints remember their frame; loading one rewinds the clock and truncates
+    // inputs and snapshots, so the failed attempt vanishes from the macro.
     struct Input { int frame; int button; bool down; bool p1; };
+
+    struct PState {
+        bool on = false;          // was this player active (visible) when captured
+        float x = 0.f, y = 0.f, rot = 0.f;
+        double yv = 0.0;          // vertical velocity
+    };
+    struct Snap { PState p[2]; };
+
     struct CpInfo { int frame; };
 
     std::vector<Input> s_rec;
+    std::vector<Snap> s_snaps;
     int s_recLevel = 0;
-    bool s_recBroken = false;      // true if a checkpoint was loaded that we never saw stored
+    bool s_recBroken = false;      // a checkpoint was loaded that we never saw stored
     std::unordered_map<CheckpointObject*, CpInfo> s_cp;
 
     std::vector<Input> s_play;
+    std::vector<Snap> s_playSnaps;
     size_t s_cursor = 0;
 
     int s_frame = 0;
     bool s_cpLoaded = false;       // set inside loadFromCheckpoint during a resetLevel
     bool s_injecting = false;
 
-    constexpr uint32_t kMagic = 0x3152414D;
+    // drift statistics for the HUD
+    float s_driftMax = 0.f;
+    int s_fixCount = 0;
+    bool s_desync = false;
+    bool s_driftValid = false;
+
+    constexpr uint32_t kMagic1 = 0x3152414D; // v1: inputs only
+    constexpr uint32_t kMagic3 = 0x3352414D; // v3: inputs + per-frame snapshots
 
     std::filesystem::path dirPath() {
         return std::filesystem::path(Mod::get()->getSaveDir().string()) / "replays";
     }
 
-    bool writeReplay(std::filesystem::path const& p, int level, std::vector<Input> const& v) {
+    template <class T>
+    void put(std::ofstream& o, T const& v) { o.write(reinterpret_cast<char const*>(&v), sizeof(T)); }
+    template <class T>
+    bool get(std::ifstream& i, T& v) { return static_cast<bool>(i.read(reinterpret_cast<char*>(&v), sizeof(T))); }
+
+    bool writeReplay(
+        std::filesystem::path const& p, int level,
+        std::vector<Input> const& inputs, std::vector<Snap> const& snaps
+    ) {
         std::ofstream out(p, std::ios::binary);
         if (!out) return false;
-        uint32_t magic = kMagic, count = static_cast<uint32_t>(v.size());
-        int32_t lvl = level;
-        out.write(reinterpret_cast<char*>(&magic), 4);
-        out.write(reinterpret_cast<char*>(&lvl), 4);
-        out.write(reinterpret_cast<char*>(&count), 4);
-        for (auto& i : v) {
-            int32_t f = i.frame, b = i.button;
-            uint8_t d = i.down, pl = i.p1;
-            out.write(reinterpret_cast<char*>(&f), 4);
-            out.write(reinterpret_cast<char*>(&b), 4);
-            out.write(reinterpret_cast<char*>(&d), 1);
-            out.write(reinterpret_cast<char*>(&pl), 1);
+        put<uint32_t>(out, kMagic3);
+        put<int32_t>(out, level);
+        put<uint32_t>(out, static_cast<uint32_t>(inputs.size()));
+        for (auto& i : inputs) {
+            put<int32_t>(out, i.frame);
+            put<int32_t>(out, i.button);
+            put<uint8_t>(out, i.down);
+            put<uint8_t>(out, i.p1);
+        }
+        put<uint32_t>(out, static_cast<uint32_t>(snaps.size()));
+        for (auto& s : snaps) {
+            for (auto& ps : s.p) {
+                put<uint8_t>(out, ps.on);
+                put<float>(out, ps.x);
+                put<float>(out, ps.y);
+                put<float>(out, ps.rot);
+                put<double>(out, ps.yv);
+            }
         }
         return static_cast<bool>(out);
     }
 
-    bool readReplay(std::filesystem::path const& p, int& level, std::vector<Input>& v) {
+    bool readReplay(
+        std::filesystem::path const& p, int& level,
+        std::vector<Input>& inputs, std::vector<Snap>& snaps
+    ) {
         std::ifstream in(p, std::ios::binary);
         if (!in) return false;
         uint32_t magic = 0, count = 0;
         int32_t lvl = 0;
-        if (!in.read(reinterpret_cast<char*>(&magic), 4) || magic != kMagic) return false;
-        if (!in.read(reinterpret_cast<char*>(&lvl), 4)) return false;
-        if (!in.read(reinterpret_cast<char*>(&count), 4)) return false;
-        if (count > 5'000'000) return false;
-        v.clear();
-        v.reserve(count);
+        if (!get(in, magic) || (magic != kMagic1 && magic != kMagic3)) return false;
+        if (!get(in, lvl) || !get(in, count) || count > 5'000'000) return false;
+
+        inputs.clear();
+        snaps.clear();
+        inputs.reserve(count);
         for (uint32_t n = 0; n < count; n++) {
             int32_t f, b; uint8_t d, pl;
-            if (!in.read(reinterpret_cast<char*>(&f), 4)) return false;
-            if (!in.read(reinterpret_cast<char*>(&b), 4)) return false;
-            if (!in.read(reinterpret_cast<char*>(&d), 1)) return false;
-            if (!in.read(reinterpret_cast<char*>(&pl), 1)) return false;
-            v.push_back({f, b, d != 0, pl != 0});
+            if (!get(in, f) || !get(in, b) || !get(in, d) || !get(in, pl)) return false;
+            inputs.push_back({f, b, d != 0, pl != 0});
+        }
+
+        if (magic == kMagic3) {
+            uint32_t sc = 0;
+            if (!get(in, sc) || sc > 5'000'000) return false;
+            snaps.reserve(sc);
+            for (uint32_t n = 0; n < sc; n++) {
+                Snap s;
+                for (auto& ps : s.p) {
+                    uint8_t on;
+                    if (!get(in, on) || !get(in, ps.x) || !get(in, ps.y) ||
+                        !get(in, ps.rot) || !get(in, ps.yv)) return false;
+                    ps.on = on != 0;
+                }
+                snaps.push_back(s);
+            }
         }
         level = lvl;
         return true;
     }
 
+    PState capture(PlayerObject* p) {
+        PState s;
+        if (!p) return s;
+        s.on = p->isVisible();
+        s.x = p->getPositionX();
+        s.y = p->getPositionY();
+        s.rot = p->getRotation();
+        s.yv = p->m_yVelocity;
+        return s;
+    }
+
+    // pull a player back onto the recorded state; only touches it if it actually drifted
+    void fixPlayer(PlayerObject* p, PState const& s) {
+        if (!p || !s.on) return;
+        float mag = std::max(std::abs(p->getPositionX() - s.x), std::abs(p->getPositionY() - s.y));
+        s_driftValid = true;
+        s_driftMax = std::max(s_driftMax, mag);
+
+        if (mag > 0.001f && mag < 20.f) {
+            p->setPosition({s.x, s.y});
+            p->m_yVelocity = s.yv;
+            s_fixCount++;
+        } else if (mag >= 20.f) {
+            s_desync = true; // too far to be drift: the run really diverged, leave it alone
+        }
+
+        float rd = std::fmod(std::abs(p->getRotation() - s.rot), 360.f);
+        if (rd > 180.f) rd = 360.f - rd;
+        if (rd > 0.01f && mag < 20.f) p->setRotation(s.rot);
+    }
+
     // Replay mode: the panel's selected replay, falling back to this level's auto-saved one
     void loadForLevel(int levelID) {
         s_play.clear();
+        s_playSnaps.clear();
+        bool anyLevel = opt("bot-any-level");
         int lvl = 0;
 
         auto name = Mod::get()->getSavedValue<std::string>("selected-replay", "");
-        if (!name.empty() && readReplay(dirPath() / (name + ".mmr"), lvl, s_play) && lvl == levelID) {
-            return;
+        if (!name.empty() && readReplay(dirPath() / (name + ".mmr"), lvl, s_play, s_playSnaps)) {
+            if (lvl == levelID) return;
+            if (anyLevel) {
+                Notification::create(
+                    fmt::format("Replay is from level {}; playing it here anyway", lvl),
+                    NotificationIcon::Warning
+                )->show();
+                return;
+            }
         }
 
         s_play.clear();
+        s_playSnaps.clear();
         auto latest = fmt::format("L{}_latest", levelID);
-        if (readReplay(dirPath() / (latest + ".mmr"), lvl, s_play) && lvl == levelID) {
+        if (readReplay(dirPath() / (latest + ".mmr"), lvl, s_play, s_playSnaps) && lvl == levelID) {
             return;
         }
 
         s_play.clear();
+        s_playSnaps.clear();
         Notification::create(
             "No replay for this level. Record one, or pick one in the Replay tab.",
             NotificationIcon::Error
@@ -120,6 +212,10 @@ namespace {
         s_frame = 0;
         s_cursor = 0;
         s_cp.clear();
+        s_driftMax = 0.f;
+        s_fixCount = 0;
+        s_desync = false;
+        s_driftValid = false;
     }
 }
 
@@ -145,7 +241,9 @@ namespace mm {
     std::string recordingInfo() {
         if (s_recBroken) return "Recording lost sync (unknown checkpoint)";
         if (s_rec.empty() || s_recLevel == 0) return "No recording in memory";
-        return fmt::format("Recording: level {}, {} inputs", s_recLevel, s_rec.size());
+        return fmt::format(
+            "Recording: level {}, {} inputs, {} frames", s_recLevel, s_rec.size(), s_snaps.size()
+        );
     }
 
     bool saveCurrentReplay(std::string& outName) {
@@ -156,16 +254,34 @@ namespace mm {
             outName = fmt::format("L{}_{}", s_recLevel, n);
             if (!std::filesystem::exists(dirPath() / (outName + ".mmr"), ec)) break;
         }
-        return writeReplay(dirPath() / (outName + ".mmr"), s_recLevel, s_rec);
+        return writeReplay(dirPath() / (outName + ".mmr"), s_recLevel, s_rec, s_snaps);
     }
 }
 
 // ============================================================
-// Speedhack: scale the time the scheduler hands to everything
+// Speedhack: scale game time AND audio
 // ============================================================
+namespace {
+    // Pitch of the master channel group scales music and sound effects together,
+    // so the song stays in sync with the sped-up / slowed-down game.
+    void applyAudioSpeed(float speed) {
+        static float last = 1.f;
+        if (speed == 1.f && last == 1.f) return; // never touch FMOD unless speedhack is in use
+        last = speed;
+        auto engine = FMODAudioEngine::sharedEngine();
+        if (!engine || !engine->m_system) return;
+        FMOD::ChannelGroup* master = nullptr;
+        if (engine->m_system->getMasterChannelGroup(&master) == FMOD_OK && master) {
+            master->setPitch(speed);
+        }
+    }
+}
+
 class $modify(MMScheduler, CCScheduler) {
     void update(float dt) {
-        CCScheduler::update(dt * speedValue());
+        float s = speedValue();
+        applyAudioSpeed(s);
+        CCScheduler::update(dt * s);
     }
 };
 
@@ -203,6 +319,7 @@ class $modify(MMPlayLayer, PlayLayer) {
         auto mode = botMode();
         if (mode == "Record") {
             s_rec.clear();
+            s_snaps.clear();
             s_recLevel = level->m_levelID;
             s_recBroken = false;
         } else if (mode == "Replay") {
@@ -218,13 +335,12 @@ class $modify(MMPlayLayer, PlayLayer) {
 
         auto mode = botMode();
         if (mode == "Replay") {
-            // replay always restarts from frame 0
-            resetBotTimeline();
+            resetBotTimeline(); // replay always restarts from frame 0
         } else if (!s_cpLoaded) {
-            // respawned at the very start: begin a fresh timeline
-            resetBotTimeline();
+            resetBotTimeline(); // respawned at the very start: fresh timeline
             if (mode == "Record") {
                 s_rec.clear();
+                s_snaps.clear();
                 s_recBroken = false;
             }
         }
@@ -250,12 +366,13 @@ class $modify(MMPlayLayer, PlayLayer) {
         }
         int n = it->second.frame;
 
-        // 1. drop the failed attempt: everything recorded at or after the checkpoint frame
+        // 1. drop the failed attempt: inputs and snapshots at or after the checkpoint frame
         auto cut = std::lower_bound(
             s_rec.begin(), s_rec.end(), n,
             [](Input const& in, int frame) { return in.frame < frame; }
         );
         s_rec.erase(cut, s_rec.end());
+        if (s_snaps.size() > static_cast<size_t>(n)) s_snaps.resize(n);
 
         // 2. the game releases all buttons on respawn; make the timeline say the same
         bool held[2][4] = {};
@@ -278,7 +395,7 @@ class $modify(MMPlayLayer, PlayLayer) {
             auto path = dirPath() / fmt::format("L{}_latest.mmr", s_recLevel);
             std::error_code ec;
             std::filesystem::create_directories(dirPath(), ec);
-            if (writeReplay(path, s_recLevel, s_rec)) {
+            if (writeReplay(path, s_recLevel, s_rec, s_snaps)) {
                 Notification::create(
                     fmt::format("Replay saved: L{}_latest", s_recLevel), NotificationIcon::Success
                 )->show();
@@ -309,11 +426,18 @@ class $modify(MMPlayLayer, PlayLayer) {
             auto mode = botMode();
             if (mode == "Record") {
                 text += fmt::format(
-                    "REC frame={} inputs={} checkpoints={}{}\n",
-                    s_frame, s_rec.size(), s_cp.size(), s_recBroken ? " LOST SYNC" : ""
+                    "REC frame={} inputs={} frames={} checkpoints={}{}\n",
+                    s_frame, s_rec.size(), s_snaps.size(), s_cp.size(),
+                    s_recBroken ? " LOST SYNC" : ""
                 );
             } else if (mode == "Replay") {
                 text += fmt::format("PLAY frame={} input {}/{}\n", s_frame, s_cursor, s_play.size());
+                if (s_driftValid) {
+                    text += fmt::format(
+                        "max drift={:.2f} corrected={}{}\n",
+                        s_driftMax, s_fixCount, s_desync ? " DESYNC" : ""
+                    );
+                }
             }
         }
         m_fields->debugLabel->setString(text.c_str());
@@ -364,6 +488,9 @@ class $modify(MMPlayLayer, PlayLayer) {
         auto node = f->trajNode;
         node->clear();
         if (!opt("trajectory") || !m_player1 || m_player1->m_isDead) return "";
+        // the fake player runs the real collision code, which can flip real orb/portal
+        // state; that would desync a recording, so it stays off while the bot is active
+        if (botMode() != "Off" && !opt("trajectory-with-bot")) return "";
 
         float scale = static_cast<float>(Mod::get()->getSettingValue<double>("trajectory-time-scale"));
         int maxSteps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("trajectory-steps"));
@@ -461,12 +588,32 @@ class $modify(MMPlayLayer, PlayLayer) {
 class $modify(MMBaseLayer, GJBaseGameLayer) {
     void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         auto pl = PlayLayer::get();
-        if (pl && !s_simulating && botMode() == "Replay") {
-            while (s_cursor < s_play.size() && s_play[s_cursor].frame <= s_frame) {
-                auto& in = s_play[s_cursor++];
-                s_injecting = true;
-                this->handleButton(in.down, in.button, in.p1);
-                s_injecting = false;
+        if (pl && !s_simulating && m_player1) {
+            auto mode = botMode();
+            size_t frame = static_cast<size_t>(s_frame);
+
+            if (mode == "Record") {
+                // one snapshot per step, taken before the step runs
+                if (s_snaps.size() > frame) s_snaps.resize(frame);
+                if (s_snaps.size() == frame) {
+                    Snap sn;
+                    sn.p[0] = capture(m_player1);
+                    sn.p[1] = capture(m_player2);
+                    s_snaps.push_back(sn);
+                }
+            } else if (mode == "Replay") {
+                // 1. pull the players back onto the recorded path if they drifted
+                if (opt("bot-frame-fix") && frame < s_playSnaps.size()) {
+                    fixPlayer(m_player1, s_playSnaps[frame].p[0]);
+                    fixPlayer(m_player2, s_playSnaps[frame].p[1]);
+                }
+                // 2. feed this step's inputs
+                while (s_cursor < s_play.size() && s_play[s_cursor].frame <= s_frame) {
+                    auto& in = s_play[s_cursor++];
+                    s_injecting = true;
+                    this->handleButton(in.down, in.button, in.p1);
+                    s_injecting = false;
+                }
             }
         }
         GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);

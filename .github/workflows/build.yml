@@ -2,7 +2,18 @@ name: Build
 on: workflow_dispatch
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+          - name: Android64
+            os: ubuntu-latest
+            target: Android64
+          - name: Windows
+            os: windows-latest
+            target: Win64
+    name: ${{ matrix.config.name }}
+    runs-on: ${{ matrix.config.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: geode-sdk/build-geode-mod@main
@@ -10,8 +21,8 @@ jobs:
           bindings: geode-sdk/bindings
           bindings-ref: main
           sdk: nightly
-          target: Android64
+          target: ${{ matrix.config.target }}
       - uses: actions/upload-artifact@v4
         with:
-          name: mod
+          name: mod-${{ matrix.config.name }}
           path: ./build/*.geode

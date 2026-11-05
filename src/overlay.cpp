@@ -1,6 +1,9 @@
 // MiniMenu overlay - UNTESTED. Touch/popup APIs may differ in Geode v6 / GD 2.2091.
 #include <Geode/Geode.hpp>
 #include <Geode/modify/CCDirector.hpp>
+#ifdef GEODE_IS_WINDOWS
+#include <Geode/modify/CCKeyboardDispatcher.hpp>
+#endif
 #include <Geode/ui/Notification.hpp>
 #include <algorithm>
 #include <cmath>
@@ -507,43 +510,105 @@ public:
 };
 
 // ---------------- floating button ----------------
-class MMOverlay : public CCNode {
+// A touch layer rather than a menu: it only claims touches that start on the
+// button, so everything else passes through, and it can tell a tap from a drag.
+class MMOverlay : public CCLayer {
 protected:
-    CCMenuItemSpriteExtra* m_btn = nullptr;
+    ButtonSprite* m_btn = nullptr;
+    bool m_down = false;
+    bool m_dragged = false;
+    CCPoint m_start;
+    CCPoint m_grab;
+
+    static CCPoint clampPos(CCPoint p) {
+        auto win = CCDirector::get()->getWinSize();
+        p.x = std::clamp(p.x, 20.f, win.width - 20.f);
+        p.y = std::clamp(p.y, 20.f, win.height - 20.f);
+        return p;
+    }
 
     bool init() override {
-        if (!CCNode::init()) return false;
+        if (!CCLayer::init()) return false;
+        this->setTouchEnabled(true);
 
         auto win = CCDirector::get()->getWinSize();
-
-        auto menu = CCMenu::create();
-        menu->setPosition({0.f, 0.f});
-        this->addChild(menu);
-
-        auto spr = ButtonSprite::create("MM");
-        spr->setScale(0.7f);
-        spr->setOpacity(200);
-        m_btn = CCMenuItemSpriteExtra::create(
-            spr, this, menu_selector(MMOverlay::onOpen)
-        );
-        m_btn->setPosition({28.f, win.height * 0.5f + 35.f});
-        menu->addChild(m_btn);
+        m_btn = ButtonSprite::create("MM");
+        m_btn->setScale(0.7f);
+        m_btn->setOpacity(200);
+        float x = Mod::get()->getSavedValue<float>("btn-x", 28.f);
+        float y = Mod::get()->getSavedValue<float>("btn-y", win.height * 0.5f + 35.f);
+        m_btn->setPosition(clampPos(ccp(x, y)));
+        this->addChild(m_btn);
 
         this->schedule(schedule_selector(MMOverlay::tick));
+        s_instance = this;
         return true;
     }
 
-    // hide inside levels and the editor
+    // hide inside levels and the editor (and always on Windows: Tab opens the menu there)
     void tick(float) {
         bool inLevel = PlayLayer::get() || LevelEditorLayer::get();
-        m_btn->setVisible(!inLevel);
-        m_btn->setEnabled(!inLevel);
+        bool show = !inLevel;
+#ifdef GEODE_IS_WINDOWS
+        show = false;
+#endif
+        if (this->getChildByID("mm-panel")) show = false;
+        m_btn->setVisible(show);
         if (inLevel) {
             if (auto p = this->getChildByID("mm-panel")) p->removeFromParent();
         }
     }
 
-    void onOpen(CCObject*) {
+    void registerWithTouchDispatcher() override {
+        CCDirector::get()->getTouchDispatcher()->addTargetedDelegate(this, -500, true);
+    }
+
+    bool ccTouchBegan(CCTouch* t, CCEvent*) override {
+        if (!m_btn->isVisible()) return false;
+        auto p = t->getLocation();
+        auto r = m_btn->boundingBox();
+        r.origin.x -= 8.f;
+        r.origin.y -= 8.f;
+        r.size.width += 16.f;
+        r.size.height += 16.f;
+        if (!r.containsPoint(p)) return false; // not ours: let the game have it
+
+        m_down = true;
+        m_dragged = false;
+        m_start = p;
+        m_grab = ccp(m_btn->getPositionX() - p.x, m_btn->getPositionY() - p.y);
+        m_btn->setScale(0.8f);
+        return true;
+    }
+
+    void ccTouchMoved(CCTouch* t, CCEvent*) override {
+        if (!m_down) return;
+        auto p = t->getLocation();
+        if (!m_dragged) {
+            float dx = p.x - m_start.x, dy = p.y - m_start.y;
+            if (dx * dx + dy * dy > 100.f) m_dragged = true; // moved more than 10 units
+        }
+        if (m_dragged) m_btn->setPosition(clampPos(ccp(p.x + m_grab.x, p.y + m_grab.y)));
+    }
+
+    void ccTouchEnded(CCTouch*, CCEvent*) override {
+        if (!m_down) return;
+        m_down = false;
+        m_btn->setScale(0.7f);
+        if (m_dragged) {
+            Mod::get()->setSavedValue<float>("btn-x", m_btn->getPositionX());
+            Mod::get()->setSavedValue<float>("btn-y", m_btn->getPositionY());
+        } else {
+            openPanel();
+        }
+    }
+
+    void ccTouchCancelled(CCTouch*, CCEvent*) override {
+        m_down = false;
+        m_btn->setScale(0.7f);
+    }
+
+    void openPanel() {
         if (this->getChildByID("mm-panel")) return;
         auto panel = MMPanel::create();
         panel->setID("mm-panel");
@@ -551,6 +616,16 @@ protected:
     }
 
 public:
+    inline static MMOverlay* s_instance = nullptr;
+
+    // Windows: Tab opens / closes the menu (menus only, not inside levels)
+    static void togglePanel() {
+        if (!s_instance) return;
+        if (PlayLayer::get() || LevelEditorLayer::get()) return;
+        if (auto p = s_instance->getChildByID("mm-panel")) p->removeFromParent();
+        else s_instance->openPanel();
+    }
+
     static MMOverlay* create() {
         auto ret = new (std::nothrow) MMOverlay();
         if (ret && ret->init()) { ret->autorelease(); return ret; }
@@ -575,3 +650,18 @@ class $modify(MMDirector, CCDirector) {
         scene->addChild(overlay, 100000);
     }
 };
+
+#ifdef GEODE_IS_WINDOWS
+// Tab toggles the menu on Windows
+class $modify(MMKeys, CCKeyboardDispatcher) {
+    bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool isKeyRepeat, double timestamp) {
+        if (key == KEY_Tab && down && !isKeyRepeat) {
+            if (!PlayLayer::get() && !LevelEditorLayer::get()) {
+                MMOverlay::togglePanel();
+                return true; // consumed
+            }
+        }
+        return CCKeyboardDispatcher::dispatchKeyboardMSG(key, down, isKeyRepeat, timestamp);
+    }
+};
+#endif

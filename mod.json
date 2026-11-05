@@ -1,6 +1,7 @@
 {
 	"geode": "6.0.0-alpha.1",
 	"gd": {
+		"win": "2.2091",
 		"android": "2.2091"
 	},
 	"id": "yourname.minimenu",
@@ -81,6 +82,24 @@
 				"input": true,
 				"slider": true
 			}
+		},
+		"bot-frame-fix": {
+			"type": "bool",
+			"name": "Replay Frame Fix",
+			"description": "During replay, snap the player back to the recorded position, rotation and vertical speed every step if it drifted.",
+			"default": true
+		},
+		"trajectory-with-bot": {
+			"type": "bool",
+			"name": "Trajectory While Bot Is Active",
+			"description": "Off by default: the trajectory simulation can change real object state and desync recordings.",
+			"default": false
+		},
+		"bot-any-level": {
+			"type": "bool",
+			"name": "Replay On Any Level",
+			"description": "Let a macro play on a different level (copy, layout version). Off = only the level it was recorded on.",
+			"default": true
 		},
 		"bot-mode": {
 			"type": "string",
