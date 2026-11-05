@@ -24,9 +24,9 @@ namespace {
     int s_frame = 0;
     bool s_injecting = false;
 
-    std::filesystem::path replayPath(int levelID) {
-        return Mod::get()->getSaveDir() / fmt::format("replay_{}.bin", levelID);
-    }
+    std::string replayPath(int levelID) {
+    return fmt::format("{}/replay_{}.bin", Mod::get()->getSaveDir().string(), levelID);
+}
 
     void saveReplay(int levelID) {
         std::ofstream out(replayPath(levelID), std::ios::binary);
@@ -64,8 +64,8 @@ class $modify(MMPlayLayer, PlayLayer) {
         Ref<PlayerObject> sim[2];
     };
 
-    bool init(GJGameLevel* level, bool useReplay, bool dontCreateObjects) {
-        if (!PlayLayer::init(level, useReplay, dontCreateObjects)) return false;
+bool init(GJGameLevel* level, bool dontCreateObjects) {
+    if (!PlayLayer::init(level, dontCreateObjects)) return false;
 
         auto f = m_fields.self();
         f->hitNode = CCDrawNode::create();
@@ -196,7 +196,7 @@ class $modify(MMPlayLayer, PlayLayer) {
 // GJBaseGameLayer: replay bot record / playback
 // ============================================================
 class $modify(MMBaseLayer, GJBaseGameLayer) {
-    void processCommands(float dt) {
+void processCommands(float dt, bool isHalfTick, bool isLastTick) {
         if (PlayLayer::get() && botMode() == "Replay") {
             while (s_cursor < s_inputs.size() && s_inputs[s_cursor].frame <= s_frame) {
                 auto& in = s_inputs[s_cursor++];
@@ -205,7 +205,7 @@ class $modify(MMBaseLayer, GJBaseGameLayer) {
                 s_injecting = false;
             }
         }
-        GJBaseGameLayer::processCommands(dt);
+GJBaseGameLayer::processCommands(dt, isHalfTick, isLastTick);
         if (PlayLayer::get()) s_frame++;
     }
 
