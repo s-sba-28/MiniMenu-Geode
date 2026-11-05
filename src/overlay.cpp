@@ -721,9 +721,10 @@ protected:
 public:
     inline static MMOverlay* s_instance = nullptr;
 
-    // Windows: Tab opens / closes the menu everywhere.
+    // Windows: Tab opens / closes the menu (menus only, not inside levels)
     static void togglePanel() {
         if (!s_instance) return;
+        if (PlayLayer::get() || LevelEditorLayer::get()) return;
         if (auto p = s_instance->getChildByID("mm-panel")) p->removeFromParent();
         else s_instance->openPanel();
     }
@@ -758,8 +759,10 @@ class $modify(MMDirector, CCDirector) {
 class $modify(MMKeys, CCKeyboardDispatcher) {
     bool dispatchKeyboardMSG(enumKeyCodes key, bool down, bool isKeyRepeat, double timestamp) {
         if (key == KEY_Tab && down && !isKeyRepeat) {
-            MMOverlay::togglePanel();
-            return true; // consumed
+            if (!PlayLayer::get() && !LevelEditorLayer::get()) {
+                MMOverlay::togglePanel();
+                return true; // consumed
+            }
         }
         return CCKeyboardDispatcher::dispatchKeyboardMSG(key, down, isKeyRepeat, timestamp);
     }

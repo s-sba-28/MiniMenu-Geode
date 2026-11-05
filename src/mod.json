@@ -1,0 +1,122 @@
+{
+	"geode": "6.0.0-alpha.1",
+	"gd": {
+		"win": "2.2091",
+		"android": "2.2091"
+	},
+	"id": "yourname.minimenu",
+	"name": "MiniMenu",
+	"version": "v0.1.0",
+	"developers": [
+		"yourname"
+	],
+	"description": "Small utility mod: noclip, hitboxes, trajectory, replay bot.",
+	"settings": {
+		"noclip": {
+			"type": "bool",
+			"name": "Noclip",
+			"description": "Ignore death. Also puts the level in test mode so nothing is submitted.",
+			"default": false
+		},
+		"show-hitboxes": {
+			"type": "bool",
+			"name": "Show Hitboxes",
+			"default": false
+		},
+		"trajectory": {
+			"type": "bool",
+			"name": "Show Trajectory",
+			"description": "Draws predicted paths for holding and not holding.",
+			"default": false
+		},
+		"trajectory-debug": {
+			"type": "bool",
+			"name": "Trajectory Debug Text",
+			"description": "Shows steps simulated, distance moved, and whether the sim died.",
+			"default": true
+		},
+		"trajectory-time-scale": {
+			"type": "float",
+			"name": "Trajectory Time Scale",
+			"description": "Multiplier on the simulation step. If the path is a tiny dot, try 60.",
+			"default": 60.0,
+			"min": 0.01,
+			"max": 240.0,
+			"control": {
+				"input": true,
+				"slider": false
+			}
+		},
+		"trajectory-steps": {
+			"type": "int",
+			"name": "Trajectory Steps",
+			"description": "How many steps to simulate.",
+			"default": 300,
+			"min": 10,
+			"max": 600,
+			"control": {
+				"input": true,
+				"slider": false
+			}
+		},
+		"trajectory-solid-death": {
+			"type": "bool",
+			"name": "Trajectory: Predict Wall Crashes",
+			"description": "Also ends the path where you would crash into the side of a block.",
+			"default": true
+		},
+		"bot-debug": {
+			"type": "bool",
+			"name": "Bot Debug Text",
+			"description": "Shows frame / input counters while recording or replaying.",
+			"default": true
+		},
+		"speedhack": {
+			"type": "float",
+			"name": "Speedhack",
+			"description": "Game speed multiplier. Anything other than 1.0 puts levels in test mode.",
+			"default": 1.0,
+			"min": 0.1,
+			"max": 3.0,
+			"control": {
+				"input": true,
+				"slider": true
+			}
+		},
+		"bot-frame-fix": {
+			"type": "bool",
+			"name": "Replay Frame Fix",
+			"description": "During replay, snap the player back to the recorded position, rotation and vertical speed every step if it drifted.",
+			"default": true
+		},
+		"trajectory-with-bot": {
+			"type": "bool",
+			"name": "Trajectory While Bot Is Active",
+			"description": "Off by default: the trajectory simulation can change real object state and desync recordings.",
+			"default": false
+		},
+		"bot-any-level": {
+			"type": "bool",
+			"name": "Replay On Any Level",
+			"description": "Let a macro play on a different level (copy, layout version). Off = only the level it was recorded on.",
+			"default": true
+		},
+		"bot-release-on-rewind": {
+			"type": "bool",
+			"name": "Release Buttons On Rewind",
+			"description": "When practice mode respawns you at a checkpoint, record that every held button was released. Turn off if replays fail right after a respawn point.",
+			"default": true
+		},
+		"bot-mode": {
+			"type": "string",
+			"name": "Replay Bot",
+			"description": "Record inputs, or replay them. Replay mode puts the level in test mode.",
+			"one-of": [
+				"Off",
+				"Record",
+				"Replay"
+			],
+			"default": "Off"
+		}
+	}
+}
