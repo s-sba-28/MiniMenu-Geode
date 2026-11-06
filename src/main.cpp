@@ -261,12 +261,17 @@ namespace mm {
         return out;
     }
 
-    bool hasRecording() { return !s_rec.empty() && s_recLevel != 0 && !s_recBroken; }
+    // any recording with inputs can be saved: local / copied levels have level ID 0,
+    // and a recording that lost sync is still worth keeping (the panel warns about it)
+    bool hasRecording() { return !s_rec.empty(); }
+    bool recordingBroken() { return s_recBroken; }
 
     std::string recordingInfo() {
-        if (s_recBroken) return "Recording lost sync (unknown checkpoint)";
-        if (s_rec.empty() || s_recLevel == 0) return "No recording in memory";
-        return fmt::format("Recording: {} inputs, {} frames", s_rec.size(), s_snaps.size());
+        if (s_rec.empty()) return "No recording in memory";
+        return fmt::format(
+            "Recording: {} inputs, {} frames{}",
+            s_rec.size(), s_snaps.size(), s_recBroken ? " (lost sync)" : ""
+        );
     }
 
     // Saves the recording in memory under a name the user chose. `name` comes back cleaned.
@@ -362,6 +367,11 @@ class $modify(MMPlayLayer, PlayLayer) {
         resetBotTimeline();
         auto mode = botMode();
         if (mode == "Record") {
+            if (!s_rec.empty()) {
+                Notification::create(
+                    "Previous unsaved recording discarded", NotificationIcon::Warning
+                )->show();
+            }
             s_rec.clear();
             s_snaps.clear();
             s_recLevel = level->m_levelID;
@@ -383,6 +393,11 @@ class $modify(MMPlayLayer, PlayLayer) {
         } else if (!s_cpLoaded) {
             resetBotTimeline(); // respawned at the very start: fresh timeline
             if (mode == "Record") {
+                if (s_rec.size() > 20 && opt("bot-debug")) {
+                    Notification::create(
+                        "Restarted from the start: recording reset", NotificationIcon::Info
+                    )->show();
+                }
                 s_rec.clear();
                 s_snaps.clear();
                 s_recBroken = false;

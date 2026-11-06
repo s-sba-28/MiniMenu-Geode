@@ -493,8 +493,11 @@ protected:
     // ---- naming dialog ----
     void onSave(CCObject*) {
         if (!mm::hasRecording()) {
+            bool recording = Mod::get()->getSettingValue<std::string>("bot-mode") == "Record";
             Notification::create(
-                "Nothing to save. Set Bot: Record and play a level first.",
+                recording
+                    ? "No inputs recorded yet. Play the level with a click first."
+                    : "Bot is not on Record, so nothing was recorded.",
                 NotificationIcon::Error
             )->show();
             return;
@@ -563,6 +566,13 @@ protected:
         Mod::get()->setSavedValue<std::string>("selected-replay", name);
         m_selSprite->setString(selectorText().c_str());
         Notification::create("Saved \"" + name + "\"", NotificationIcon::Success)->show();
+        if (mm::recordingBroken()) {
+            Notification::create(
+                "This run lost sync at a checkpoint, so it may not replay correctly.",
+                NotificationIcon::Warning
+            )->show();
+        }
+        if (m_infoLabel) m_infoLabel->setString(mm::recordingInfo().c_str());
         closeNameDialog();
     }
 
