@@ -53,6 +53,7 @@ namespace {
 
     std::vector<Input> s_play;
     std::string s_loadStatus = "nothing loaded"; // shown on the HUD in Replay mode
+    std::string s_loadedName;                    // which replay s_play currently holds
     std::vector<Snap> s_playSnaps;
     size_t s_cursor = 0;
 
@@ -203,6 +204,7 @@ namespace {
         s_playSnaps.clear();
 
         auto name = Mod::get()->getSavedValue<std::string>("selected-replay", "");
+        s_loadedName = name;
         if (name.empty()) return failLoad("No replay selected. Pick one in the Replay tab.");
 
         int lvl = 0;
@@ -404,6 +406,11 @@ class $modify(MMPlayLayer, PlayLayer) {
         auto mode = botMode();
         if (mode == "Replay") {
             resetBotTimeline(); // replay always restarts from frame 0
+            // The mode or the selection may have been changed on the pause / complete screen,
+            // and Retry never goes through init(), so make sure the replay is loaded here too.
+            auto sel = Mod::get()->getSavedValue<std::string>("selected-replay", "");
+            if (s_play.empty() || sel != s_loadedName) loadForLevel(m_level->m_levelID);
+            m_isTestMode = true; // bot runs never submit
         } else if (!s_cpLoaded) {
             resetBotTimeline(); // respawned at the very start: fresh timeline
             if (mode == "Record") {
@@ -415,6 +422,7 @@ class $modify(MMPlayLayer, PlayLayer) {
                 s_rec.clear();
                 s_snaps.clear();
                 s_recBroken = false;
+                s_recLevel = m_level->m_levelID; // Record may have been switched on after init()
             }
         }
         // (if a checkpoint was loaded, loadFromCheckpoint already rewound the timeline)

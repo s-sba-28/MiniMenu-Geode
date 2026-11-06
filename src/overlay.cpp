@@ -509,6 +509,12 @@ protected:
         std::string next = kModes[(i + 1) % 3];
         Mod::get()->setSettingValue<std::string>("bot-mode", next);
         m_modeSprite->setString(fmt::format("Bot: {}", next).c_str());
+        if (next != "Off") {
+            Notification::create(
+                "Restart the level from the start for " + next + " to take effect",
+                NotificationIcon::Info
+            )->show();
+        }
     }
 
     // ---- naming dialog ----
