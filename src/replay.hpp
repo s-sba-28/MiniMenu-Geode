@@ -9,6 +9,7 @@ namespace mm {
     bool hasRecording();                           // is there a recording with inputs in memory?
     bool recordingBroken();                        // did it lose sync with a checkpoint?
     std::string recordingInfo();                   // short status text for the panel
+    std::string replayInfo(std::string const& name); // "N inputs, M frames" for a saved replay
     // save the recording under a user-chosen name; `name` is cleaned in place, `err` explains a failure
     bool saveReplayAs(std::string& name, std::string& err);
 }

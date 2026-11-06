@@ -81,6 +81,7 @@ protected:
     ButtonSprite* m_selSprite = nullptr;
     CCMenuItemSpriteExtra* m_selBtn = nullptr;
     CCLabelBMFont* m_infoLabel = nullptr;
+    CCLabelBMFont* m_replayInfoLabel = nullptr;
 
     // dropdown
     CCMenu* m_dropMenu = nullptr;
@@ -258,10 +259,26 @@ protected:
         m_infoLabel->setPosition(c.x, c.y - 44.f);
         m_replay->addChild(m_infoLabel);
 
+        m_replayInfoLabel = CCLabelBMFont::create("", "chatFont.fnt");
+        m_replayInfoLabel->setScale(0.6f);
+        m_replayInfoLabel->setPosition(c.x, c.y - 82.f);
+        m_replay->addChild(m_replayInfoLabel);
+        refreshReplayInfo();
+
         auto note = CCLabelBMFont::create("Record a run, then Save and name it", "chatFont.fnt");
         note->setScale(0.5f);
         note->setPosition(c.x, c.y - 62.f);
         m_replay->addChild(note);
+    }
+
+    // what the currently selected replay file contains (checked before you enter a level)
+    void refreshReplayInfo() {
+        if (!m_replayInfoLabel) return;
+        auto name = selectedName();
+        std::string text = name.empty()
+            ? std::string("Selected: none")
+            : "Selected: " + shortName(name, 18) + " - " + mm::replayInfo(name);
+        m_replayInfoLabel->setString(text.c_str());
     }
 
     // ================= tabs =================
@@ -271,7 +288,10 @@ protected:
         m_replay->setVisible(tab == 1);
         m_tabMainSpr->setString(tab == 0 ? "[Main]" : "Main");
         m_tabReplaySpr->setString(tab == 1 ? "[Replay]" : "Replay");
-        if (tab == 1) m_infoLabel->setString(mm::recordingInfo().c_str());
+        if (tab == 1) {
+            m_infoLabel->setString(mm::recordingInfo().c_str());
+            refreshReplayInfo();
+        }
     }
 
     void onTabMain(CCObject*) { showTab(0); }
@@ -472,6 +492,7 @@ protected:
         if (idx >= 0 && idx < static_cast<int>(m_names.size())) {
             Mod::get()->setSavedValue<std::string>("selected-replay", m_names[idx]);
             m_selSprite->setString(selectorText().c_str());
+            refreshReplayInfo();
         }
         closeDrop();
     }
@@ -573,6 +594,7 @@ protected:
             )->show();
         }
         if (m_infoLabel) m_infoLabel->setString(mm::recordingInfo().c_str());
+        refreshReplayInfo();
         closeNameDialog();
     }
 
@@ -591,6 +613,7 @@ protected:
         Notification::create(
             fmt::format("{} replay(s) found", names.size()), NotificationIcon::Success
         )->show();
+        refreshReplayInfo();
     }
 
     void onClose(CCObject*) { this->removeFromParent(); }

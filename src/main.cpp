@@ -52,6 +52,7 @@ namespace {
     std::unordered_map<CheckpointObject*, CpInfo> s_cp;
 
     std::vector<Input> s_play;
+    std::string s_loadStatus = "nothing loaded"; // shown on the HUD in Replay mode
     std::vector<Snap> s_playSnaps;
     size_t s_cursor = 0;
 
@@ -190,40 +191,38 @@ namespace {
     }
 
     // Replay mode: load the replay chosen in the Replay tab
+    void failLoad(std::string const& why) {
+        s_play.clear();
+        s_playSnaps.clear();
+        s_loadStatus = "LOAD FAILED: " + why;
+        Notification::create(why, NotificationIcon::Error)->show();
+    }
+
     void loadForLevel(int levelID) {
         s_play.clear();
         s_playSnaps.clear();
 
         auto name = Mod::get()->getSavedValue<std::string>("selected-replay", "");
-        if (name.empty()) {
-            Notification::create(
-                "No replay selected. Pick one in the Replay tab.", NotificationIcon::Error
-            )->show();
-            return;
-        }
+        if (name.empty()) return failLoad("No replay selected. Pick one in the Replay tab.");
 
         int lvl = 0;
-        if (!readReplay(dirPath() / (name + ".mmr"), lvl, s_play, s_playSnaps)) {
-            s_play.clear();
-            s_playSnaps.clear();
-            Notification::create("Could not read replay " + name, NotificationIcon::Error)->show();
-            return;
-        }
+        auto path = dirPath() / (name + ".mmr");
+        std::error_code ec;
+        if (!std::filesystem::exists(path, ec)) return failLoad("Replay \"" + name + "\" not found.");
+        if (!readReplay(path, lvl, s_play, s_playSnaps)) return failLoad("Replay \"" + name + "\" is unreadable.");
+        if (s_play.empty()) return failLoad("Replay \"" + name + "\" has no inputs.");
 
         if (lvl != levelID) {
             if (!opt("bot-any-level")) {
-                s_play.clear();
-                s_playSnaps.clear();
-                Notification::create(
-                    "This replay was recorded on another level. Turn on Replay On Any Level.",
-                    NotificationIcon::Error
-                )->show();
-                return;
+                return failLoad("Recorded on another level. Turn on Replay On Any Level.");
             }
             Notification::create(
                 "Replay is from another level; playing it here anyway", NotificationIcon::Warning
             )->show();
         }
+        s_loadStatus = fmt::format(
+            "\"{}\" loaded: {} inputs, {} frames", name, s_play.size(), s_playSnaps.size()
+        );
     }
 
     void resetBotTimeline() {
@@ -272,6 +271,21 @@ namespace mm {
             "Recording: {} inputs, {} frames{}",
             s_rec.size(), s_snaps.size(), s_recBroken ? " (lost sync)" : ""
         );
+    }
+
+    // one-line description of a saved replay, read from its header only
+    std::string replayInfo(std::string const& name) {
+        std::ifstream in(dirPath() / (name + ".mmr"), std::ios::binary);
+        if (!in) return "file not found";
+        uint32_t magic = 0, count = 0, sc = 0;
+        int32_t lvl = 0;
+        if (!get(in, magic) || (magic != kMagic1 && magic != kMagic3)) return "not a MiniMenu replay";
+        if (!get(in, lvl) || !get(in, count)) return "file is cut off";
+        if (magic == kMagic3) {
+            in.seekg(static_cast<std::streamoff>(count) * 10, std::ios::cur); // 10 bytes per input
+            if (!get(in, sc)) return "file is cut off";
+        }
+        return fmt::format("{} inputs, {} frames{}", count, sc, count == 0 ? " (EMPTY)" : "");
     }
 
     // Saves the recording in memory under a name the user chose. `name` comes back cleaned.
@@ -525,6 +539,7 @@ class $modify(MMPlayLayer, PlayLayer) {
                     s_rewinds, s_lastRewindFrame, s_lastDropped
                 );
             } else if (mode == "Replay") {
+                text += "replay: " + s_loadStatus + "\n";
                 text += fmt::format("PLAY frame={} input {}/{}\n", s_frame, s_cursor, s_play.size());
                 if (s_driftValid) {
                     text += fmt::format(
