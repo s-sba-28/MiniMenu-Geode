@@ -197,6 +197,29 @@ namespace {
         if (rd > 0.01f && mag < 20.f) p->setRotation(s.rot);
     }
 
+    // Reads the four corners of an object's oriented box. OBB2D's member names differ between
+    // bindings versions (m_p1..m_p4 does not exist in the 2.2091 ones), so this tries the known
+    // spellings and simply reports failure when none matches; the caller then draws the plain
+    // rectangle instead. Inside a template, the branches that don't compile are discarded.
+    template <class Box>
+    bool boxCorners(Box* b, CCPoint (&v)[4]) {
+        if constexpr (requires { b->m_p1; b->m_p2; b->m_p3; b->m_p4; }) {
+            v[0] = b->m_p1; v[1] = b->m_p2; v[2] = b->m_p3; v[3] = b->m_p4;
+            return true;
+        } else if constexpr (requires { b->m_corners[0]; b->m_corners[3]; }) {
+            for (int i = 0; i < 4; i++) v[i] = b->m_corners[i];
+            return true;
+        } else if constexpr (requires { b->m_points[0]; b->m_points[3]; }) {
+            for (int i = 0; i < 4; i++) v[i] = b->m_points[i];
+            return true;
+        } else if constexpr (requires { b->m_vertices[0]; b->m_vertices[3]; }) {
+            for (int i = 0; i < 4; i++) v[i] = b->m_vertices[i];
+            return true;
+        } else {
+            return false;
+        }
+    }
+
     // Replay mode: load the replay chosen in the Replay tab
     void failLoad(std::string const& why) {
         s_play.clear();
@@ -626,12 +649,14 @@ class $modify(MMPlayLayer, PlayLayer) {
             // looks initialised, otherwise fall back to the plain rectangle
             bool drawn = false;
             if (auto box = obj->m_orientedBox) {
-                CCPoint v[4] = {box->m_p1, box->m_p2, box->m_p3, box->m_p4};
-                float cx = (v[0].x + v[1].x + v[2].x + v[3].x) / 4.f;
-                float cy = (v[0].y + v[1].y + v[2].y + v[3].y) / 4.f;
-                if (std::abs(cx - obj->getPositionX()) < 150.f && std::abs(cy - obj->getPositionY()) < 150.f) {
-                    node->drawPolygon(v, 4, fill, bw, edge);
-                    drawn = true;
+                CCPoint v[4];
+                if (boxCorners(box, v)) {
+                    float cx = (v[0].x + v[1].x + v[2].x + v[3].x) / 4.f;
+                    float cy = (v[0].y + v[1].y + v[2].y + v[3].y) / 4.f;
+                    if (std::abs(cx - obj->getPositionX()) < 150.f && std::abs(cy - obj->getPositionY()) < 150.f) {
+                        node->drawPolygon(v, 4, fill, bw, edge);
+                        drawn = true;
+                    }
                 }
             }
             if (!drawn) {
