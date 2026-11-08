@@ -6,7 +6,7 @@
 	},
 	"id": "yourname.minimenu",
 	"name": "MiniMenu",
-	"version": "v0.2.0",
+	"version": "v0.2.2",
 	"developers": [
 		"yourname"
 	],
@@ -91,8 +91,8 @@
 		},
 		"trajectory-with-bot": {
 			"type": "bool",
-			"name": "Trajectory While Bot Is Active",
-			"description": "Off by default: the trajectory simulation can change real object state and desync recordings.",
+			"name": "Trajectory While Recording",
+			"description": "Show the trajectory while Bot is on Record. Off by default: the simulation can change orb/portal state and affect what gets recorded. (Replay always allows it.)",
 			"default": false
 		},
 		"bot-any-level": {
@@ -106,6 +106,35 @@
 			"name": "Release Buttons On Rewind",
 			"description": "When practice mode respawns you at a checkpoint, record that every held button was released. Turn off if replays fail right after a respawn point.",
 			"default": true
+		},
+		"hitbox-style": {
+			"type": "string",
+			"name": "Hitbox Style",
+			"description": "How hitboxes are drawn.",
+			"one-of": [
+				"Outline + Fill",
+				"Outline only",
+				"Fill only"
+			],
+			"default": "Outline + Fill"
+		},
+		"death-delay-custom": {
+			"type": "bool",
+			"name": "Custom Death Delay",
+			"description": "Use your own delay between dying and respawning instead of the game's.",
+			"default": false
+		},
+		"death-delay": {
+			"type": "float",
+			"name": "Death Delay (seconds)",
+			"description": "Time between dying and respawning when Custom Death Delay is on. 0 = instant.",
+			"default": 1.0,
+			"min": 0.0,
+			"max": 5.0,
+			"control": {
+				"input": true,
+				"slider": true
+			}
 		},
 		"bot-mode": {
 			"type": "string",

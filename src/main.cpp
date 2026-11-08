@@ -23,6 +23,12 @@ namespace {
     bool opt(char const* key) { return Mod::get()->getSettingValue<bool>(key); }
     std::string botMode() { return Mod::get()->getSettingValue<std::string>("bot-mode"); }
     float speedValue() { return static_cast<float>(Mod::get()->getSettingValue<double>("speedhack")); }
+    bool deathDelayOn() { return opt("death-delay-custom"); }
+    float deathDelay() {
+        return std::max(0.f, static_cast<float>(Mod::get()->getSettingValue<double>("death-delay")));
+    }
+    bool s_inOwnReset = false;     // true while our timer runs the game's own respawn code
+    bool s_respawnPending = false; // true while our death-delay timer is counting down
 
     // ---------- trajectory sim state ----------
     bool s_simulating = false; // true only while we step the fake players
@@ -380,6 +386,7 @@ class $modify(MMPlayLayer, PlayLayer) {
             s = PlayerObject::create(1, 1, this, m_objectLayer, false);
         }
 
+        s_respawnPending = false;
         resetBotTimeline();
         auto mode = botMode();
         if (mode == "Record") {
@@ -400,6 +407,8 @@ class $modify(MMPlayLayer, PlayLayer) {
     }
 
     void resetLevel() {
+        this->unschedule(schedule_selector(MMPlayLayer::mmRespawn));
+        s_respawnPending = false;
         s_cpLoaded = false;
         PlayLayer::resetLevel();
 
@@ -503,12 +512,7 @@ class $modify(MMPlayLayer, PlayLayer) {
         s_cursor = 0;
         s_rewinds++;
         s_lastRewindFrame = n;
-        if (opt("bot-debug")) {
-            Notification::create(
-                fmt::format("Macro rewound to frame {} ({}), dropped {} inputs", n, how, s_lastDropped),
-                NotificationIcon::Info
-            )->show();
-        }
+        (void)how; // how the frame was found; only useful when debugging
     }
 
     void levelComplete() {
@@ -523,6 +527,26 @@ class $modify(MMPlayLayer, PlayLayer) {
             return;
         }
         PlayLayer::destroyPlayer(player, obj);
+
+        if (deathDelayOn()) {
+            // run the respawn on our own timer; the game's own delayed reset is swallowed below
+            this->unschedule(schedule_selector(MMPlayLayer::mmRespawn));
+            this->scheduleOnce(schedule_selector(MMPlayLayer::mmRespawn), deathDelay());
+            s_respawnPending = true;
+        }
+    }
+
+    // the game calls this ~1 second after a death; with a custom delay we ignore that call
+    void delayedResetLevel() {
+        if (deathDelayOn() && s_respawnPending && !s_inOwnReset) return;
+        PlayLayer::delayedResetLevel();
+    }
+
+    void mmRespawn(float) {
+        s_respawnPending = false;
+        s_inOwnReset = true;
+        PlayLayer::delayedResetLevel(); // the game's normal respawn path
+        s_inOwnReset = false;
     }
 
     void postUpdate(float dt) {
@@ -573,32 +597,61 @@ class $modify(MMPlayLayer, PlayLayer) {
         node->clear();
         if (!opt("show-hitboxes") || !m_player1) return;
 
+        // "Outline + Fill", "Outline only" or "Fill only"
+        auto style = Mod::get()->getSettingValue<std::string>("hitbox-style");
+        bool wantOutline = style != "Fill only";
+        bool wantFill = style != "Outline only";
+        float fillA = (style == "Fill only") ? 0.35f : 0.15f; // fill alone needs to be stronger
+        float bw = wantOutline ? 0.5f : 0.f;
+
         float px = m_player1->getPositionX();
         for (auto obj : CCArrayExt<GameObject*>(m_objects)) {
             if (!obj || std::abs(obj->getPositionX() - px) > 500.f) continue;
 
+            // red: hazards, blue: solids and slopes, green: everything else that reacts
+            // (portals, pads, orbs, coins, ...). Pure decoration has no hitbox.
             ccColor4F border;
             switch (obj->m_objectType) {
+                case GameObjectType::Decoration: continue;
                 case GameObjectType::Hazard:
                 case GameObjectType::AnimatedHazard: border = {1.f, 0.f, 0.f, 1.f}; break;
-                case GameObjectType::Solid:          border = {0.f, 0.4f, 1.f, 1.f}; break;
-                default: continue;
+                case GameObjectType::Solid:
+                case GameObjectType::Slope:          border = {0.f, 0.4f, 1.f, 1.f}; break;
+                default:                             border = {0.f, 1.f, 0.4f, 1.f}; break;
             }
-            ccColor4F fill = {border.r, border.g, border.b, 0.15f};
-            auto r = obj->getObjectRect();
-            node->drawRect(
-                ccp(r.getMinX(), r.getMinY()), ccp(r.getMaxX(), r.getMaxY()),
-                fill, 0.5f, border
-            );
+            ccColor4F fill = {border.r, border.g, border.b, wantFill ? fillA : 0.f};
+            ccColor4F edge = wantOutline ? border : ccColor4F{border.r, border.g, border.b, 0.f};
+
+            // rotated objects (slopes, tilted spikes) carry an oriented box; use it when it
+            // looks initialised, otherwise fall back to the plain rectangle
+            bool drawn = false;
+            if (auto box = obj->m_orientedBox) {
+                CCPoint v[4] = {box->m_p1, box->m_p2, box->m_p3, box->m_p4};
+                float cx = (v[0].x + v[1].x + v[2].x + v[3].x) / 4.f;
+                float cy = (v[0].y + v[1].y + v[2].y + v[3].y) / 4.f;
+                if (std::abs(cx - obj->getPositionX()) < 150.f && std::abs(cy - obj->getPositionY()) < 150.f) {
+                    node->drawPolygon(v, 4, fill, bw, edge);
+                    drawn = true;
+                }
+            }
+            if (!drawn) {
+                auto r = obj->getObjectRect();
+                if (r.size.width < 0.5f || r.size.height < 0.5f) continue; // zero-size triggers
+                node->drawRect(
+                    ccp(r.getMinX(), r.getMinY()), ccp(r.getMaxX(), r.getMaxY()),
+                    fill, bw, edge
+                );
+            }
         }
 
         for (auto p : {m_player1, m_player2}) {
             if (!p) continue;
             auto r = p->getObjectRect();
-            ccColor4F c = {1.f, 1.f, 0.f, 1.f};
+            ccColor4F pe = wantOutline ? ccColor4F{1.f, 1.f, 0.f, 1.f} : ccColor4F{1.f, 1.f, 0.f, 0.f};
+            ccColor4F pf = {1.f, 1.f, 0.f, wantFill ? fillA : 0.f};
             node->drawRect(
                 ccp(r.getMinX(), r.getMinY()), ccp(r.getMaxX(), r.getMaxY()),
-                {1.f, 1.f, 0.f, 0.15f}, 0.5f, c
+                pf, bw, pe
             );
         }
     }
@@ -613,8 +666,9 @@ class $modify(MMPlayLayer, PlayLayer) {
         node->clear();
         if (!opt("trajectory") || !m_player1 || m_player1->m_isDead) return "";
         // the fake player runs the real collision code, which can flip real orb/portal
-        // state; that would desync a recording, so it stays off while the bot is active
-        if (botMode() != "Off" && !opt("trajectory-with-bot")) return "";
+        // state. Replay is allowed (frame fix pulls the player back if it drifts), but
+        // recording stays off by default so the sim cannot change what gets recorded.
+        if (botMode() == "Record" && !opt("trajectory-with-bot")) return "";
 
         float scale = static_cast<float>(Mod::get()->getSettingValue<double>("trajectory-time-scale"));
         int maxSteps = static_cast<int>(Mod::get()->getSettingValue<int64_t>("trajectory-steps"));

@@ -15,8 +15,9 @@
 using namespace geode::prelude;
 
 namespace {
-    constexpr char const* kKeys[3] = {"noclip", "show-hitboxes", "trajectory"};
-    constexpr char const* kNames[3] = {"Noclip", "Hitboxes", "Trajectory"};
+    constexpr char const* kKeys[4] = {"noclip", "show-hitboxes", "trajectory", "death-delay-custom"};
+    constexpr char const* kNames[4] = {"Noclip", "Hitboxes", "Trajectory", "Death Delay"};
+    constexpr char const* kHitStyles[3] = {"Outline + Fill", "Outline only", "Fill only"};
     constexpr char const* kModes[3] = {"Off", "Record", "Replay"};
 
     int modeIndex(std::string const& m) {
@@ -70,6 +71,8 @@ protected:
 
     // main tab: speed slider
     CCLabelBMFont* m_speedLabel = nullptr;
+    CCLabelBMFont* m_delayLabel = nullptr;
+    ButtonSprite* m_hitSprite = nullptr;
     CCLayerColor* m_fill = nullptr;
     CCLayerColor* m_thumb = nullptr;
     float m_sliderX0 = 0.f;
@@ -135,7 +138,7 @@ protected:
         auto closeSpr = ButtonSprite::create("Close");
         closeSpr->setScale(0.55f);
         auto closeBtn = CCMenuItemSpriteExtra::create(closeSpr, this, menu_selector(MMPanel::onClose));
-        closeBtn->setPosition(c.x, c.y - 112.f);
+        closeBtn->setPosition(c.x, c.y - 120.f);
         tabMenu->addChild(closeBtn);
 
         buildMainTab();
@@ -151,8 +154,8 @@ protected:
         this->addChild(m_main);
         m_mainMenu = makeMenu(m_main);
 
-        for (int i = 0; i < 3; i++) {
-            float y = c.y + 62.f - i * 30.f;
+        for (int i = 0; i < 4; i++) {
+            float y = c.y + 72.f - i * 25.f;
 
             auto label = CCLabelBMFont::create(kNames[i], "bigFont.fnt");
             label->setScale(0.5f);
@@ -172,11 +175,11 @@ protected:
         // speed slider (drawn by hand; the panel's touch methods drive it)
         m_speedLabel = CCLabelBMFont::create("Speed: 1.00x", "bigFont.fnt");
         m_speedLabel->setScale(0.5f);
-        m_speedLabel->setPosition(c.x, c.y - 38.f);
+        m_speedLabel->setPosition(c.x, c.y - 51.f);
         m_main->addChild(m_speedLabel);
 
         m_sliderX0 = c.x - kSliderW / 2.f;
-        m_sliderY = c.y - 64.f;
+        m_sliderY = c.y - 72.f;
 
         auto track = CCLayerColor::create({60, 60, 60, 255}, kSliderW, 6.f);
         track->setPosition({m_sliderX0, m_sliderY - 3.f});
@@ -192,10 +195,61 @@ protected:
         auto resetSpr = ButtonSprite::create("1.0x");
         resetSpr->setScale(0.45f);
         auto resetBtn = CCMenuItemSpriteExtra::create(resetSpr, this, menu_selector(MMPanel::onSpeedReset));
-        resetBtn->setPosition(c.x + 112.f, c.y - 38.f);
+        resetBtn->setPosition(c.x + 112.f, c.y - 51.f);
         m_mainMenu->addChild(resetBtn);
 
+        // custom death delay: value with - / + buttons (the toggle above switches it on)
+        m_delayLabel = CCLabelBMFont::create("", "bigFont.fnt");
+        m_delayLabel->setScale(0.45f);
+        m_delayLabel->setPosition(c.x - 25.f, c.y - 27.f);
+        m_main->addChild(m_delayLabel);
+
+        auto minusSpr = ButtonSprite::create("-");
+        minusSpr->setScale(0.5f);
+        auto minus = CCMenuItemSpriteExtra::create(minusSpr, this, menu_selector(MMPanel::onDelayDown));
+        minus->setPosition(c.x + 70.f, c.y - 27.f);
+        m_mainMenu->addChild(minus);
+
+        auto plusSpr = ButtonSprite::create("+");
+        plusSpr->setScale(0.5f);
+        auto plus = CCMenuItemSpriteExtra::create(plusSpr, this, menu_selector(MMPanel::onDelayUp));
+        plus->setPosition(c.x + 105.f, c.y - 27.f);
+        m_mainMenu->addChild(plus);
+
+        // hitbox style: Outline + Fill / Outline only / Fill only
+        auto hitStyle = Mod::get()->getSettingValue<std::string>("hitbox-style");
+        m_hitSprite = ButtonSprite::create(("Hitbox: " + hitStyle).c_str());
+        m_hitSprite->setScale(0.45f);
+        auto hitBtn = CCMenuItemSpriteExtra::create(m_hitSprite, this, menu_selector(MMPanel::onHitStyle));
+        hitBtn->setPosition(c.x, c.y - 94.f);
+        m_mainMenu->addChild(hitBtn);
+
         refreshSlider();
+        refreshDelay();
+    }
+
+    void refreshDelay() {
+        double d = Mod::get()->getSettingValue<double>("death-delay");
+        m_delayLabel->setString(fmt::format("Delay: {:.1f}s", d).c_str());
+    }
+
+    void adjustDelay(double step) {
+        double d = Mod::get()->getSettingValue<double>("death-delay");
+        d = std::clamp(std::round((d + step) * 10.0) / 10.0, 0.0, 5.0);
+        Mod::get()->setSettingValue<double>("death-delay", d);
+        refreshDelay();
+    }
+
+    void onDelayDown(CCObject*) { adjustDelay(-0.1); }
+    void onDelayUp(CCObject*) { adjustDelay(0.1); }
+
+    void onHitStyle(CCObject*) {
+        auto cur = Mod::get()->getSettingValue<std::string>("hitbox-style");
+        int i = 0;
+        for (int k = 0; k < 3; k++) if (cur == kHitStyles[k]) i = k;
+        std::string next = kHitStyles[(i + 1) % 3];
+        Mod::get()->setSettingValue<std::string>("hitbox-style", next);
+        m_hitSprite->setString(("Hitbox: " + next).c_str());
     }
 
     void refreshSlider() {
@@ -643,6 +697,7 @@ protected:
     bool m_dragged = false;
     CCPoint m_start;
     CCPoint m_grab;
+    int m_hold = 0; // frames to stay hidden after gameplay
 
     static CCPoint clampPos(CCPoint p) {
         auto win = CCDirector::get()->getWinSize();
@@ -666,6 +721,7 @@ protected:
 
         this->schedule(schedule_selector(MMOverlay::tick));
         s_instance = this;
+        updateVisibility(CCDirector::get()->getRunningScene());
         return true;
     }
 
@@ -682,12 +738,35 @@ protected:
         return false;
     }
 
-    // Android: show in menus, the pause menu and the level-complete screen, hide while playing.
-    // Windows: never show the button; Tab opens the menu everywhere instead.
-    void tick(float) {
-        bool inLevel = PlayLayer::get() || LevelEditorLayer::get();
+    // Is this node, or something just below it, a level? It looks through transition scenes too,
+    // so the button is already hidden while a level loads or fades out, moments when
+    // PlayLayer::get() is not reliable.
+    static bool nodeHasLevel(CCNode* n, int depth = 0) {
+        if (!n || depth > 2) return false;
+        if (typeinfo_cast<PlayLayer*>(n) || typeinfo_cast<LevelEditorLayer*>(n)) return true;
+        auto kids = n->getChildren();
+        if (!kids) return false;
+        for (auto k : CCArrayExt<CCNode*>(kids)) {
+            if (k != s_instance && nodeHasLevel(k, depth + 1)) return true;
+        }
+        return false;
+    }
+
+    // Android: visible in menus, on the pause menu and on the level-complete screen; hidden
+    // everywhere else in a level (gameplay, loading, fading out, the editor).
+    // Windows: never shown, Tab opens the menu instead.
+    void updateVisibility(CCScene* scene) {
+        if (!m_btn) return;
+        bool inLevel = PlayLayer::get() || LevelEditorLayer::get() || nodeHasLevel(scene);
         bool menuOpen = inLevel && levelMenuOpen();
-        bool show = !inLevel || menuOpen;
+
+        // stay hidden for a short moment after gameplay ends, so a one-frame gap in the checks
+        // above (level start / exit) can never flash the button
+        bool gameplay = inLevel && !menuOpen;
+        if (gameplay) m_hold = 20;
+        else if (!menuOpen && m_hold > 0) m_hold--;
+
+        bool show = !gameplay && (menuOpen || m_hold == 0);
 #ifdef GEODE_IS_WINDOWS
         show = false;
 #endif
@@ -696,9 +775,11 @@ protected:
         m_btn->setVisible(show);
 #ifndef GEODE_IS_WINDOWS
         // never leave the panel up over live gameplay on Android
-        if (panel && inLevel && !menuOpen) panel->removeFromParent();
+        if (panel && gameplay) panel->removeFromParent();
 #endif
     }
+
+    void tick(float) { updateVisibility(CCDirector::get()->getRunningScene()); }
 
     void registerWithTouchDispatcher() override {
         // ahead of FLAlertLayer (-500): the pause and complete screens would otherwise swallow our taps
@@ -760,6 +841,9 @@ protected:
 public:
     inline static MMOverlay* s_instance = nullptr;
 
+    // called as a scene is about to be shown, before the next tick runs
+    void refresh(CCScene* scene) { updateVisibility(scene); }
+
     // Windows: Tab opens / closes the menu everywhere, including gameplay
     static void togglePanel() {
         if (!s_instance) return;
@@ -789,6 +873,7 @@ class $modify(MMDirector, CCDirector) {
 
         overlay->removeFromParentAndCleanup(false);
         scene->addChild(overlay, 100000);
+        overlay->refresh(scene); // hide at once if this scene is a level
     }
 };
 
