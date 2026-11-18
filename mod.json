@@ -1,14 +1,14 @@
 {
-	"geode": "6.0.0-alpha.1",
+	"geode": "6.0.0-alpha.2",
 	"gd": {
 		"win": "2.2091",
 		"android": "2.2091"
 	},
-	"id": "yourname.minimenu",
+	"id": "notarandomguy.minimenu",
 	"name": "MiniMenu",
 	"version": "v0.2.2",
 	"developers": [
-		"yourname"
+		"NotARandomGuy"
 	],
 	"description": "Small utility mod: noclip, hitboxes, trajectory, replay bot.",
 	"settings": {

@@ -128,23 +128,45 @@ namespace {
     ) {
         std::ifstream in(p, std::ios::binary);
         if (!in) return false;
+
+        in.seekg(0, std::ios::end);
+        auto end = in.tellg();
+        if (end == std::streampos(-1)) return false;
+        auto fileSize = static_cast<uint64_t>(static_cast<std::streamoff>(end));
+        in.seekg(0, std::ios::beg);
+
         uint32_t magic = 0, count = 0;
         int32_t lvl = 0;
         if (!get(in, magic) || (magic != kMagic1 && magic != kMagic3)) return false;
         if (!get(in, lvl) || !get(in, count) || count > 5'000'000) return false;
 
+        uint64_t inputsEnd = 12 + static_cast<uint64_t>(count) * 10;
+        if (inputsEnd > fileSize) return false;
+        uint32_t sc = 0;
+        if (magic == kMagic3) {
+            in.seekg(static_cast<std::streamoff>(inputsEnd), std::ios::beg);
+            if (!get(in, sc) || sc > 5'000'000) return false;
+            uint64_t expectedSize = inputsEnd + 4 + static_cast<uint64_t>(sc) * 42;
+            if (expectedSize != fileSize) return false;
+        } else if (inputsEnd != fileSize) {
+            return false;
+        }
+
+        in.seekg(12, std::ios::beg);
         inputs.clear();
         snaps.clear();
         inputs.reserve(count);
+        int32_t previousFrame = 0;
         for (uint32_t n = 0; n < count; n++) {
             int32_t f, b; uint8_t d, pl;
             if (!get(in, f) || !get(in, b) || !get(in, d) || !get(in, pl)) return false;
+            if (f < 0 || (n > 0 && f < previousFrame) || d > 1 || pl > 1) return false;
+            previousFrame = f;
             inputs.push_back({f, b, d != 0, pl != 0});
         }
 
         if (magic == kMagic3) {
-            uint32_t sc = 0;
-            if (!get(in, sc) || sc > 5'000'000) return false;
+            if (!get(in, sc)) return false;
             snaps.reserve(sc);
             for (uint32_t n = 0; n < sc; n++) {
                 Snap s;
@@ -152,6 +174,8 @@ namespace {
                     uint8_t on;
                     if (!get(in, on) || !get(in, ps.x) || !get(in, ps.y) ||
                         !get(in, ps.rot) || !get(in, ps.yv)) return false;
+                    if (on > 1 || !std::isfinite(ps.x) || !std::isfinite(ps.y) ||
+                        !std::isfinite(ps.rot) || !std::isfinite(ps.yv)) return false;
                     ps.on = on != 0;
                 }
                 snaps.push_back(s);
