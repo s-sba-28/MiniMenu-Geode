@@ -1,43 +1,60 @@
 # MiniMenu
 
-MiniMenu is a Geometry Dash utility mod for Geode. It provides an in-game
-settings panel with noclip, hitbox and trajectory displays, a speed control,
-custom death delay, and an input recorder/replayer.
+<p align="center">
+  <img src="./logo.png" alt="MiniMenu logo" width="180">
+</p>
 
-> Noclip, speed changes, and replay playback put the level in test mode. They
-> are intended for practice and do not submit a normal run.
+**MiniMenu** is a Geometry Dash practice and utility mod built with Geode. It adds a compact in-game panel for gameplay tools and input replay.
+
+> [!IMPORTANT]
+> Noclip, speed changes, and replay playback can place a level in test mode and prevent normal-run completion or stat submission. Use these features for practice only.
+
+## Features
+
+- **Noclip** - Ignore deaths and hazards.
+- **Hitboxes** - Display collisions with outline, fill, or both.
+- **Trajectory preview** - Predict the player's path for holding and releasing.
+- **Speed control** - Adjust and quickly reset level speed.
+- **Custom death delay** - Control the respawn timing.
+- **Replay bot** - Record inputs, save recordings, and replay them later.
+
+## Opening MiniMenu
+
+| Platform | Open / close |
+| --- | --- |
+| Windows | Press **Tab** |
+| Android | Tap the floating MiniMenu logo |
+
+The Android button is square with a black background and the MiniMenu logo centered above it. Drag it to move it; its position is saved automatically.
+
+## Replay guide
+
+1. Open **Replay**.
+2. Set **Bot** to **Record**.
+3. Restart the level and play normally.
+4. Choose **Save** and give the recording a name.
+5. Set **Bot** to **Replay**, select the replay, and restart the level.
+
+Replay files use the `.mmr` extension and are stored under `replays` in the mod's Geode save directory.
+
+- **Import** opens the replay folder.
+- **Refresh** detects newly added `.mmr` files.
+- Do not edit replay files while they are selected or playing.
 
 ## Compatibility
 
 - Geode `6.0.0-alpha.2`
 - Geometry Dash `2.2091`
-- Windows 64-bit and Android 64-bit builds are configured in GitHub Actions.
-
-## Using the mod
-
-- On Windows, press **Tab** to open or close the panel. On Android, use the
-  floating **MM** button in menus, pause screens, and level-complete screens.
-- In **Main**, toggle the utilities or adjust speed and death delay.
-- In **Replay**, set **Bot** to **Record**, play the level, then choose **Save**
-  and name the recording.
-- Select a saved replay, set **Bot** to **Replay**, and restart the level to
-  play it back. Replay files use the `.mmr` extension.
-- **Import** shows the replay folder. Copy `.mmr` files there and tap
-  **Refresh**.
-
-Replays are stored in the mod's Geode save directory, under `replays`. Do not
-edit replay files while they are selected or being played.
+- Windows 64-bit
+- Android 64-bit
 
 ## Building
 
-Install the Geode SDK for the target platform, set `GEODE_SDK` to its folder,
-then configure and build with CMake:
+Install the Geode SDK for the target platform and set `GEODE_SDK` to its directory:
 
 ```powershell
 cmake -B build -S . -G Ninja
 cmake --build build
 ```
 
-The GitHub Actions workflow builds Windows and Android 64-bit packages against
-the Geode version declared in `mod.json`.
-
+GitHub Actions builds Windows and Android 64-bit packages against the Geode version declared in `mod.json`.

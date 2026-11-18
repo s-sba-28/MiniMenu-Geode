@@ -692,7 +692,7 @@ public:
 // button, so everything else passes through, and it can tell a tap from a drag.
 class MMOverlay : public CCLayer {
 protected:
-    ButtonSprite* m_btn = nullptr;
+    CCNode* m_btn = nullptr;
     bool m_down = false;
     bool m_dragged = false;
     CCPoint m_start;
@@ -711,9 +711,21 @@ protected:
         this->setTouchEnabled(true);
 
         auto win = CCDirector::get()->getWinSize();
-        m_btn = ButtonSprite::create("MM");
+        m_btn = CCNode::create();
+        m_btn->setContentSize({48.f, 48.f});
+        m_btn->setAnchorPoint({0.5f, 0.5f});
+
+        auto bg = CCLayerColor::create({0, 0, 0, 220}, 48.f, 48.f);
+        bg->setAnchorPoint({0.f, 0.f});
+        m_btn->addChild(bg);
+
+        auto logo = CCSprite::create("logo.png"_spr);
+        if (logo) {
+            logo->setScale(0.18f);
+            logo->setPosition({24.f, 24.f});
+            m_btn->addChild(logo);
+        }
         m_btn->setScale(0.7f);
-        m_btn->setOpacity(200);
         float x = Mod::get()->getSavedValue<float>("btn-x", 28.f);
         float y = Mod::get()->getSavedValue<float>("btn-y", win.height * 0.5f + 35.f);
         m_btn->setPosition(clampPos(ccp(x, y)));

@@ -10,7 +10,12 @@
 	"developers": [
 		"NotARandomGuy"
 	],
-	"description": "Small utility mod: noclip, hitboxes, trajectory, replay bot.",
+	"description": "A practice utility panel for noclip, hitboxes, trajectory previews, speed control, custom death delay, and replay recording/playback.",
+	"resources": {
+		"sprites": [
+			"resources/*.png"
+		]
+	},
 	"settings": {
 		"noclip": {
 			"type": "bool",
