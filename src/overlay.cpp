@@ -401,7 +401,7 @@ protected:
             // tapping the text box focuses it, tapping elsewhere in the dialog releases it
             if (m_nameInput) {
                 if (m_nameInput->boundingBox().containsPoint(p)) m_nameInput->focus();
-                else m_nameInput->defocus();
+                else m_nameInput->unfocus();
             }
             return true;
         }
@@ -629,7 +629,7 @@ protected:
     }
 
     void closeNameDialog() {
-        if (m_nameInput) m_nameInput->defocus();
+        if (m_nameInput) m_nameInput->unfocus();
         if (m_dlg) m_dlg->removeFromParent();
         m_dlg = nullptr;
         m_dlgMenu = nullptr;

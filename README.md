@@ -41,10 +41,3 @@ cmake --build build
 The GitHub Actions workflow builds Windows and Android 64-bit packages against
 the Geode version declared in `mod.json`.
 
-## Adding a logo
-
-Add your square PNG artwork as `logo.png` in the repository root and commit it
-with the mod. Geode Index uses this repository logo for the mod listing; it
-does not automatically replace the in-game **MM** button. To show custom
-artwork inside the game, add the image as a mod resource and load it in
-`src/overlay.cpp`.
